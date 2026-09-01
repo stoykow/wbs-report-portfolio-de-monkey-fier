@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.2.1
+Stand: Version 2.3.0
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -106,13 +106,13 @@ Der Standard-Timeout beträgt 900.000 ms beziehungsweise fünfzehn Minuten. Beim
 
 Der Einstellungsdialog lädt die Modelle des aktiven Profils direkt beim Öffnen und erneut bei einem Profilwechsel. Die manuelle Aktualisierung bleibt zusätzlich verfügbar.
 
-Reasoning wird je Profil als `reasoningMode` (`auto`, `off`, `on`) und `reasoningEffort` (`low`, `medium`, `high`) gespeichert. `auto` ergänzt keine Vorgabe. Für erkannte OpenAI-Reasoning-Modelle werden bei `on` die passenden `reasoning_effort`-Werte gesendet; `none` wird nur bei GPT-5.1 für „Aus“ verwendet. Bei LM Studio `gpt-oss` über den bestehenden Chat-Completions-Endpunkt wird die unterstützte Harmony-Systemanweisung nur temporär an den Request angehängt. Unbekannte Anbieter und Modelle erhalten keine zusätzlichen Parameter. Lehnt ein unterstützter Server den Parameter mit 400, 404 oder 422 ab, erfolgt ein einmaliger Fallback ohne ihn.
+Reasoning wird je Profil zusätzlich als einheitliches Feld `reasoning` (`auto`, `off`, `on`, `low`, `medium`, `high`) gespeichert; die bisherigen `reasoningMode`- und `reasoningEffort`-Felder bleiben als Abwärtskompatibilität erhalten. Für LM Studio wird beim Laden der Modelle der native Endpunkt `/api/v1/models` verwendet. Die vom ausgewählten Modell gemeldeten `capabilities.reasoning.allowed_options` und `default` steuern die Auswahl im Einstellungsdialog. `auto` sendet keine Reasoning-Vorgabe; nicht gemeldete oder nicht erlaubte Werte werden nicht gesendet. Native LM-Studio-Anfragen verwenden `/api/v1/chat`, `input`, `reasoning` (nur bei erlaubten Werten) und `max_output_tokens`. Wenn der native Models-Endpunkt nicht verfügbar ist, fällt das Laden auf den konfigurierten OpenAI-kompatiblen Models-Endpunkt zurück und Reasoning bleibt automatisch. Andere Provider erhalten keine erfundenen Capabilities; die bisherige explizite OpenAI-Kompatibilitätsunterstützung bleibt bestehen.
 
 Die strukturierte KI-Ausgabe wird in kompakten Tageszeilen gerendert: Original, Erklärung und optionaler Vorschlag stehen ohne redundante Zwischenüberschriften zusammen. `notes` bleiben als beiläufige Hinweise getrennt.
 
-`callAi()` sendet eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
+`callAi()` sendet für LM Studio die native Chat-Anfrage und für andere Anbieter weiterhin eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
 
-Die Einstellungsmigration ersetzt ausschließlich den unveränderten früheren Standardprompt. Benutzerdefinierte Systemprompts werden nicht überschrieben. Reasoning-Anweisungen für erkannte LM-Studio-gpt-oss-Profile werden nur für den einzelnen Request ergänzt und nie in den gespeicherten Systemprompt geschrieben.
+Die Einstellungsmigration ersetzt ausschließlich den unveränderten früheren Standardprompt. Benutzerdefinierte Systemprompts werden nicht überschrieben. Reasoning-Werte werden pro Profil gespeichert; ältere Profile erhalten automatisch `reasoning: "auto"`.
 
 Der optionale Debug-Modus protokolliert nur technische Ereignisse und Statuscodes. Tokens, Berichtsheftinhalte und personenbezogene Daten werden nicht protokolliert.
 

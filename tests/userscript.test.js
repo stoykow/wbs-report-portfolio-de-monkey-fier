@@ -17,6 +17,8 @@ const {
     testAiConnection,
     classifyHttpError,
     parseModelsResponse,
+    parseLmStudioModelsResponse,
+    normalizeReasoningCapabilities,
     detectDayIndex,
     parseHours,
     normalizeDateValue,
@@ -29,6 +31,7 @@ const {
     reportNumberMessage,
     validateReport,
     buildAiSystemPrompt,
+    getSelectedReasoning,
     getReasoningRequestParameters,
     buildAiRequest,
     callAi,
@@ -188,6 +191,17 @@ test("liest OpenAI-, Ollama-ähnliche und einfache Modelllisten", () => {
     assert.deepEqual(parseModelsResponse('["x","x","y"]'), ["x", "y"]);
     assert.throws(() => parseModelsResponse("kein json"), /kein gültiges JSON/);
     assert.throws(() => parseModelsResponse("{}"), /keine Modellliste/);
+});
+
+test("liest LM-Studio-Capabilities ohne Modellnamen zu erraten", () => {
+    const models = parseLmStudioModelsResponse(JSON.stringify({ models: [
+        { key: "google/gemma", display_name: "Gemma", capabilities: { reasoning: { allowed_options: ["low", "medium"], default: "medium" } } },
+        { key: "plain-model", capabilities: {} }
+    ] }));
+    assert.deepEqual(models[0].capabilities.allowedOptions, ["low", "medium"]);
+    assert.equal(models[0].capabilities.default, "medium");
+    assert.equal(models[1].capabilities.supported, false);
+    assert.deepEqual(normalizeReasoningCapabilities({ reasoning: { allowed_options: ["unknown", "high"] } }, "x").allowedOptions, ["high"]);
 });
 
 test("verarbeitet deutsche Dezimalstunden", () => {
@@ -401,6 +415,21 @@ test("baut eine minimierte und ausgabebegrenzte Chat-Completions-Anfrage", () =>
     assert.throws(() => buildAiRequest(report, { model: "", manualModel: "" }, { systemPrompt: DEFAULT_SYSTEM_PROMPT }), /Kein KI-Modell/);
 });
 
+test("baut für LM Studio native Chat-Anfragen mit erlaubtem Reasoning", () => {
+    const profile = {
+        provider: "lm-studio", model: "gemma", manualModel: "", temperature: 0.2, maxTokens: 1000,
+        reasoning: "medium", reasoningCapabilities: normalizeReasoningCapabilities({ reasoning: { allowed_options: ["low", "medium"], default: "medium" } }, "gemma")
+    };
+    const report = { days: [{ weekday: "Montag", hours: 8, entries: ["Konkrete Tätigkeit"] }] };
+    const request = buildAiRequest(report, profile, { systemPrompt: "Prompt" });
+    assert.equal(request.max_output_tokens, 1000);
+    assert.equal(request.reasoning, "medium");
+    assert.equal(Object.prototype.hasOwnProperty.call(request, "messages"), false);
+    const automatic = buildAiRequest(report, { ...profile, reasoning: "auto" }, { systemPrompt: "Prompt" });
+    assert.equal(Object.prototype.hasOwnProperty.call(automatic, "reasoning"), false);
+    assert.equal(getSelectedReasoning({ ...profile, reasoning: "low" }), "low");
+});
+
 test("wendet Reasoning nur provider- und modellabhängig an", () => {
     const base = { provider: "openai-compatible", model: "o3-mini", manualModel: "", reasoningMode: "on", reasoningEffort: "high" };
     assert.deepEqual(getReasoningRequestParameters(base), { reasoning_effort: "high" });
@@ -513,6 +542,21 @@ test("verarbeitet eine vollständige Chat-Completions-Antwort", async () => {
     const result = await callAi({ days: [{ weekday: "Montag", hours: 8, entries: ["Server"] }] }, profile, { debug: false, systemPrompt: DEFAULT_SYSTEM_PROMPT });
     assert.equal(result.status, "warning");
     assert.equal(result.suggestedComment, "Bitte genauer beschreiben.");
+    delete global.GM_xmlhttpRequest;
+});
+
+test("verarbeitet eine native LM-Studio-Antwort und sendet nur erlaubtes Reasoning", async () => {
+    const requests = [];
+    global.GM_xmlhttpRequest = options => {
+        requests.push({ url: options.url, body: JSON.parse(options.data) });
+        options.onload({ status: 200, responseText: JSON.stringify({ output: [{ type: "message", content: '{"status":"ok","formalIssues":[],"contentIssues":[],"hourIssues":[],"notes":[],"suggestedComment":""}' }] }) });
+    };
+    const profile = { ...defaultAiSettings().profiles[0], provider: "lm-studio", baseUrl: "http://localhost:1234", model: "gemma", authType: "none", reasoning: "high", reasoningCapabilities: normalizeReasoningCapabilities({ reasoning: { allowed_options: ["low", "medium"], default: "medium" } }, "gemma") };
+    const result = await callAi({ days: [{ weekday: "Montag", hours: 8, entries: ["Konkrete Tätigkeit"] }] }, profile, { debug: false, systemPrompt: DEFAULT_SYSTEM_PROMPT });
+    assert.equal(result.status, "ok");
+    assert.equal(requests[0].url, "http://localhost:1234/api/v1/chat");
+    assert.equal(Object.prototype.hasOwnProperty.call(requests[0].body, "reasoning"), false);
+    assert.equal(requests[0].body.max_output_tokens, 500);
     delete global.GM_xmlhttpRequest;
 });
 

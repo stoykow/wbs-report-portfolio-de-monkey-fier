@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.2.1
+// @version       2.3.0
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -29,6 +29,17 @@
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
     const AI_SETTINGS_SCHEMA_VERSION = 5;
+    const REASONING_VALUES = ["auto", "off", "on", "low", "medium", "high"];
+    const REASONING_LABELS = {
+        auto: "Automatisch",
+        off: "Aus",
+        on: "Ein",
+        low: "Niedrig",
+        medium: "Mittel",
+        high: "Hoch"
+    };
+    const LM_STUDIO_NATIVE_MODELS_ENDPOINT = "/api/v1/models";
+    const LM_STUDIO_NATIVE_CHAT_ENDPOINT = "/api/v1/chat";
     const DAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
     const DAY_ALIASES = [
         ["montag", "monday", "mo"], ["dienstag", "tuesday", "di"],
@@ -69,8 +80,10 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         temperature: 0.2,
         maxTokens: 500,
 
+        reasoning: "auto",
         reasoningMode: "auto",
         reasoningEffort: "medium",
+        reasoningCapabilities: null,
 
         timeout: 900000,
 
@@ -111,6 +124,25 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             const parsed = Number(value);
             return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
         };
+        const legacyMode = ["auto", "off", "on"].includes(source.reasoningMode) ? source.reasoningMode : "auto";
+        const legacyEffort = ["low", "medium", "high"].includes(source.reasoningEffort) ? source.reasoningEffort : "medium";
+        const storedReasoning = REASONING_VALUES.includes(source.reasoning)
+            ? source.reasoning
+            : legacyMode === "auto" ? "auto" : legacyMode === "off" ? "off" : legacyEffort;
+        const rawCapabilities = source.reasoningCapabilities && typeof source.reasoningCapabilities === "object" ? source.reasoningCapabilities : null;
+        const allowedOptions = rawCapabilities && Array.isArray(rawCapabilities.allowedOptions)
+            ? [...new Set(rawCapabilities.allowedOptions.filter(option => REASONING_VALUES.includes(option) && option !== "auto"))]
+            : [];
+        const normalizedCapabilities = rawCapabilities ? {
+            model: String(rawCapabilities.model || ""),
+            known: rawCapabilities.known === true,
+            supported: rawCapabilities.supported === true && allowedOptions.length > 0,
+            allowedOptions,
+            default: REASONING_VALUES.includes(rawCapabilities.default) && rawCapabilities.default !== "auto" ? rawCapabilities.default : "",
+            source: String(rawCapabilities.source || "")
+        } : null;
+        const normalizedReasoning = normalizedCapabilities && normalizedCapabilities.known && normalizedCapabilities.supported &&
+            storedReasoning !== "auto" && !normalizedCapabilities.allowedOptions.includes(storedReasoning) ? "auto" : storedReasoning;
         return {
             ...cloneDefaultProfile(fallbackId, `KI-Profil ${fallbackIndex + 1}`),
             ...source,
@@ -124,8 +156,10 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             manualModel: String(source.manualModel || ""),
             temperature: numberInRange(source.temperature, DEFAULT_PROFILE.temperature, 0, 2),
             maxTokens: numberInRange(source.maxTokens, DEFAULT_PROFILE.maxTokens, 1, 32768),
-            reasoningMode: ["auto", "off", "on"].includes(source.reasoningMode) ? source.reasoningMode : "auto",
-            reasoningEffort: ["low", "medium", "high"].includes(source.reasoningEffort) ? source.reasoningEffort : "medium",
+            reasoning: normalizedReasoning,
+            reasoningMode: normalizedReasoning === "auto" || normalizedReasoning === "off" ? normalizedReasoning : "on",
+            reasoningEffort: ["low", "medium", "high"].includes(normalizedReasoning) ? normalizedReasoning : legacyEffort,
+            reasoningCapabilities: normalizedCapabilities,
             timeout: numberInRange(source.timeout, DEFAULT_PROFILE.timeout, 1000, 900000),
             authType: ["none", "bearer", "api-key"].includes(source.authType) ? source.authType : "none",
             token: typeof source.token === "string" ? source.token : ""
@@ -305,6 +339,64 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         }).filter(Boolean).map(String))].sort((a, b) => a.localeCompare(b));
     }
 
+    function normalizeReasoningCapabilities(raw, model = "", source = "") {
+        const capabilities = raw && typeof raw === "object" ? raw : {};
+        const reasoning = capabilities.reasoning && typeof capabilities.reasoning === "object" ? capabilities.reasoning : capabilities;
+        const rawAllowed = reasoning.allowed_options || reasoning.allowedOptions || [];
+        const allowedOptions = Array.isArray(rawAllowed)
+            ? [...new Set(rawAllowed.map(option => String(option).toLowerCase()).filter(option => REASONING_VALUES.includes(option) && option !== "auto"))]
+            : [];
+        const defaultValue = String(reasoning.default || reasoning.default_option || "").toLowerCase();
+        return {
+            model: String(model || ""),
+            known: true,
+            supported: allowedOptions.length > 0,
+            allowedOptions,
+            default: allowedOptions.includes(defaultValue) ? defaultValue : "",
+            source: String(source || "lm-studio-native")
+        };
+    }
+
+    function parseLmStudioModelsResponse(responseText) {
+        let parsed;
+        try {
+            parsed = JSON.parse(responseText);
+        } catch (_error) {
+            throw new Error("Der native LM-Studio-Models-Endpunkt hat kein gültiges JSON geliefert.");
+        }
+        const candidates = Array.isArray(parsed)
+            ? parsed
+            : parsed && Array.isArray(parsed.models)
+                ? parsed.models
+                : parsed && Array.isArray(parsed.data)
+                    ? parsed.data
+                    : null;
+        if (!candidates) throw new Error("Der native LM-Studio-Models-Endpunkt liefert keine Modellliste.");
+        return candidates.map(item => {
+            const model = item && typeof item === "object" ? String(item.key || item.id || item.model || item.name || "") : String(item || "");
+            const capabilities = item && typeof item === "object" ? normalizeReasoningCapabilities(item.capabilities || {}, model) : normalizeReasoningCapabilities({}, model);
+            return {
+                id: model,
+                name: item && typeof item === "object" ? String(item.display_name || item.name || model) : model,
+                capabilities
+            };
+        }).filter(item => item.id);
+    }
+
+    async function getLmStudioModels(profile, settings = loadAiConfig()) {
+        const response = await gmRequest({
+            method: "GET",
+            url: joinUrl(profile.baseUrl, LM_STUDIO_NATIVE_MODELS_ENDPOINT),
+            headers: { Accept: "application/json", ...buildAuthHeaders(profile) },
+            timeout: profile.timeout
+        });
+        const httpError = classifyHttpError(response.status);
+        if (httpError) throw httpError;
+        const models = parseLmStudioModelsResponse(response.responseText || "");
+        debugLog(settings, "LM Studio native models response", { status: response.status, count: models.length });
+        return models;
+    }
+
     async function getAvailableModels(profile, settings = loadAiConfig()) {
         debugLog(settings, "AI models request started");
         const response = await gmRequest({
@@ -319,14 +411,30 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return parseModelsResponse(response.responseText || "");
     }
 
+    async function getModelsForProfile(profile, settings = loadAiConfig()) {
+        if (profile && profile.provider === "lm-studio") {
+            try {
+                const details = await getLmStudioModels(profile, settings);
+                return { details, models: details.map(item => item.id), native: true };
+            } catch (error) {
+                debugLog(settings, "LM Studio native models unavailable; using OpenAI-compatible fallback", { message: error.message });
+                const models = await getAvailableModels(profile, settings);
+                return { details: [], models, native: false, capabilityError: error instanceof Error ? error.message : String(error) };
+            }
+        }
+        const models = await getAvailableModels(profile, settings);
+        return { details: [], models, native: false };
+    }
+
     async function testAiConnection(profile, settings = loadAiConfig()) {
         try {
-            const models = await getAvailableModels(profile, settings);
-            if (!models.length) return { ok: true, level: "warning", message: "🟡 Server erreichbar, aber kein Modell verfügbar", models };
-            return { ok: true, level: "ok", message: "🟢 KI-Server verbunden", models };
+            const result = await getModelsForProfile(profile, settings);
+            const models = result.models;
+            if (!models.length) return { ok: true, level: "warning", message: "🟡 Server erreichbar, aber kein Modell verfügbar", models, details: result.details };
+            return { ok: true, level: "ok", message: "🟢 KI-Server verbunden", models, details: result.details };
         } catch (error) {
             const knownMessage = error instanceof Error ? error.message : "Unbekannter Verbindungsfehler.";
-            return { ok: false, level: "error", message: `🔴 ${knownMessage}`, models: [] };
+            return { ok: false, level: "error", message: `🔴 ${knownMessage}`, models: [], details: [] };
         }
     }
 
@@ -630,38 +738,57 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return issues;
     }
 
-    function isLmStudioGptOssChat(profile) {
-        return profile && profile.provider === "lm-studio" && /gpt-oss/i.test(selectedModel(profile)) && /\/chat\/completions(?:[/?]|$)/i.test(String(profile.chatEndpoint || ""));
+    function getSelectedReasoning(profile) {
+        if (REASONING_VALUES.includes(profile && profile.reasoning) && profile.reasoning !== "auto") return profile.reasoning;
+        const mode = ["auto", "off", "on"].includes(profile && profile.reasoningMode) ? profile.reasoningMode : "auto";
+        const effort = ["low", "medium", "high"].includes(profile && profile.reasoningEffort) ? profile.reasoningEffort : "medium";
+        if (mode !== "auto") return mode === "off" ? "off" : effort;
+        return REASONING_VALUES.includes(profile && profile.reasoning) ? profile.reasoning : "auto";
     }
 
-    function isOpenAiReasoningModel(profile) {
+    function isLegacyOpenAiReasoningModel(profile) {
         if (!profile || profile.provider !== "openai-compatible") return false;
-        const model = selectedModel(profile);
-        return /(^|[/:_-])(o1(?:-mini|-preview|$)|o3(?:-mini|-pro|$)|o4(?:-mini|$)|gpt-5(?:\.\d+)?(?:-[a-z0-9.-]+)?)(?:$|[/:_-])/i.test(model);
+        return /(^|[/:_-])(o1(?:-mini|-preview|$)|o3(?:-mini|-pro|$)|o4(?:-mini|$)|gpt-5(?:\.\d+)?(?:-[a-z0-9.-]+)?)(?:$|[/:_-])/i.test(selectedModel(profile));
     }
 
     function getReasoningRequestParameters(profile) {
-        const mode = ["auto", "off", "on"].includes(profile && profile.reasoningMode) ? profile.reasoningMode : "auto";
-        const effort = ["low", "medium", "high"].includes(profile && profile.reasoningEffort) ? profile.reasoningEffort : "medium";
-        if (mode === "auto" || !isOpenAiReasoningModel(profile)) return {};
-        if (mode === "off") {
-            const model = selectedModel(profile).toLocaleLowerCase("en-US");
-            return /^gpt-5\.1(?:$|[-/:])/i.test(model) ? { reasoning_effort: "none" } : {};
+        const selected = getSelectedReasoning(profile);
+        const hasCapabilities = profile && profile.reasoningCapabilities && profile.reasoningCapabilities.known;
+        const capabilities = hasCapabilities
+            ? normalizeReasoningCapabilities(profile.reasoningCapabilities, selectedModel(profile), profile.reasoningCapabilities.source)
+            : null;
+        if (selected === "auto") return {};
+        if (!hasCapabilities && isLegacyOpenAiReasoningModel(profile)) {
+            if (selected === "off") return /^gpt-5\.1(?:$|[-/:])/i.test(selectedModel(profile)) ? { reasoning_effort: "none" } : {};
+            return { reasoning_effort: selected };
         }
-        return { reasoning_effort: effort };
+        if (!capabilities || !capabilities.allowedOptions.includes(selected)) return {};
+        const parameter = profile.reasoningParameter;
+        if (parameter === "reasoning_effort" && ["off", "low", "medium", "high"].includes(selected)) {
+            return { reasoning_effort: selected === "off" ? "none" : selected };
+        }
+        return {};
     }
 
     function buildAiSystemPrompt(settings = loadAiConfig(), profile = null) {
         const prompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-        if (!isLmStudioGptOssChat(profile) || profile.reasoningMode !== "on") return prompt;
-        const effort = ["low", "medium", "high"].includes(profile.reasoningEffort) ? profile.reasoningEffort : "medium";
-        return `${prompt}\n\nReasoning: ${effort}`;
+        if (profile && profile.provider === "lm-studio" && /\/chat\/completions(?:[/?]|$)/i.test(String(profile.chatEndpoint || "")) && getSelectedReasoning(profile) !== "auto") {
+            return `${prompt}\n\nReasoning: ${getSelectedReasoning(profile)}`;
+        }
+        return prompt;
     }
 
-    function buildAiRequest(reportData, profile, settings = loadAiConfig()) {
+    function buildNativeLmStudioInput(reportData, settings, profile) {
+        const userPrompt = `Prüfe dieses minimierte Berichtsheft. Nutze ausschließlich die folgenden Daten und antworte nur als JSON:\n${JSON.stringify(reportData)}`;
+        return `${buildAiSystemPrompt(settings, { ...profile, provider: "native-lm-studio" })}\n\n${userPrompt}`;
+    }
+
+    function isLmStudioNativeProfile(profile) {
+        return Boolean(profile && profile.provider === "lm-studio");
+    }
+
+    function buildOpenAiCompatibleRequest(reportData, profile, settings) {
         const model = selectedModel(profile);
-        if (!model) throw new Error("Kein KI-Modell ausgewählt. Bitte zuerst ein Modell laden oder manuell eintragen.");
-        if (!reportData || !Array.isArray(reportData.days) || !reportData.days.length) throw new Error("Das Berichtsheft enthält keine auswertbaren Daten.");
         return {
             model,
             temperature: profile.temperature,
@@ -674,21 +801,73 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         };
     }
 
+    function buildAiRequest(reportData, profile, settings = loadAiConfig()) {
+        const model = selectedModel(profile);
+        if (!model) throw new Error("Kein KI-Modell ausgewählt. Bitte zuerst ein Modell laden oder manuell eintragen.");
+        if (!reportData || !Array.isArray(reportData.days) || !reportData.days.length) throw new Error("Das Berichtsheft enthält keine auswertbaren Daten.");
+        if (isLmStudioNativeProfile(profile)) {
+            const request = {
+                model,
+                input: buildNativeLmStudioInput(reportData, settings, profile),
+                temperature: profile.temperature,
+                max_output_tokens: profile.maxTokens
+            };
+            const selected = getSelectedReasoning(profile);
+            const capabilities = profile.reasoningCapabilities && profile.reasoningCapabilities.known
+                ? normalizeReasoningCapabilities(profile.reasoningCapabilities, model, profile.reasoningCapabilities.source)
+                : null;
+            if (selected !== "auto" && capabilities && capabilities.allowedOptions.includes(selected)) request.reasoning = selected;
+            return request;
+        }
+        return buildOpenAiCompatibleRequest(reportData, profile, settings);
+    }
+
+    function extractNativeLmStudioContent(envelope) {
+        if (!envelope || typeof envelope !== "object") return "";
+        if (typeof envelope.output === "string") return envelope.output;
+        if (Array.isArray(envelope.output)) {
+            const parts = envelope.output.flatMap(item => {
+                if (typeof item === "string") return [item];
+                if (!item || typeof item !== "object") return [];
+                if (typeof item.content === "string") return [item.content];
+                if (Array.isArray(item.content)) return item.content.map(part => typeof part === "string" ? part : part && (part.text || part.content) || "");
+                if (typeof item.text === "string") return [item.text];
+                return [];
+            });
+            if (parts.join("").trim()) return parts.join("");
+        }
+        if (typeof envelope.content === "string") return envelope.content;
+        return envelope.choices && envelope.choices[0] && envelope.choices[0].message
+            ? String(envelope.choices[0].message.content || "")
+            : "";
+    }
+
     async function callAi(reportData, profile, settings = loadAiConfig()) {
         debugLog(settings, "AI request started", { modelSelected: Boolean(selectedModel(profile)) });
-        const request = buildAiRequest(reportData, profile, settings);
+        let request = buildAiRequest(reportData, profile, settings);
         const requestOptions = {
             method: "POST",
-            url: joinUrl(profile.baseUrl, profile.chatEndpoint),
+            url: joinUrl(profile.baseUrl, isLmStudioNativeProfile(profile) ? LM_STUDIO_NATIVE_CHAT_ENDPOINT : profile.chatEndpoint),
             headers: { "Content-Type": "application/json", Accept: "application/json", ...buildAuthHeaders(profile) },
             data: JSON.stringify(request),
             timeout: profile.timeout
         };
         let response = await gmRequest(requestOptions);
-        const reasoningParameterWasSent = Object.prototype.hasOwnProperty.call(request, "reasoning_effort");
+        if (isLmStudioNativeProfile(profile) && [404, 405].includes(Number(response.status))) {
+            const fallbackRequest = buildOpenAiCompatibleRequest(reportData, profile, settings);
+            debugLog(settings, "LM Studio native chat unavailable; using OpenAI-compatible fallback", { status: response.status });
+            request = fallbackRequest;
+            response = await gmRequest({
+                ...requestOptions,
+                url: joinUrl(profile.baseUrl, profile.chatEndpoint),
+                data: JSON.stringify(fallbackRequest)
+            });
+        }
+        const reasoningParameterWasSent = Object.prototype.hasOwnProperty.call(request, "reasoning_effort") || Object.prototype.hasOwnProperty.call(request, "reasoning");
         if (reasoningParameterWasSent && [400, 404, 422].includes(Number(response.status))) {
             const fallbackRequest = { ...request };
             delete fallbackRequest.reasoning_effort;
+            delete fallbackRequest.reasoning;
             debugLog(settings, "Reasoning parameter unsupported; retrying without it", { status: response.status });
             response = await gmRequest({ ...requestOptions, data: JSON.stringify(fallbackRequest) });
         }
@@ -701,7 +880,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         } catch (_error) {
             throw new Error("Der KI-Server hat keine gültige API-Antwort geliefert.");
         }
-        const content = envelope && envelope.choices && envelope.choices[0] && envelope.choices[0].message ? envelope.choices[0].message.content : "";
+        const content = isLmStudioNativeProfile(profile) ? extractNativeLmStudioContent(envelope) : envelope && envelope.choices && envelope.choices[0] && envelope.choices[0].message ? envelope.choices[0].message.content : "";
         if (!content) throw new Error("Die KI-Antwort ist leer.");
         return parseAiResponse(content);
     }
@@ -889,8 +1068,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const temperature = makeInput("wbs-ai-temperature", "", "number"); temperature.min = "0"; temperature.max = "2"; temperature.step = "0.1";
         const maxTokens = makeInput("wbs-ai-max-tokens", "", "number"); maxTokens.min = "1"; maxTokens.max = "32768"; maxTokens.step = "1";
         const reasoningSelect = createElement("select"); reasoningSelect.id = "wbs-ai-reasoning";
-        [["auto", "Automatisch"], ["off", "Aus"], ["low", "Niedrig"], ["medium", "Mittel"], ["high", "Hoch"]]
-            .forEach(([value, text]) => reasoningSelect.appendChild(new Option(text, value)));
+        reasoningSelect.appendChild(new Option("Automatisch", "auto"));
+        const reasoningInfo = createElement("p", { className: "wbs-dmf-note" });
         const timeout = makeInput("wbs-ai-timeout", "", "number"); timeout.min = "1000"; timeout.max = "900000"; timeout.step = "1000";
         const authEnabled = makeInput("wbs-ai-auth-enabled", "", "checkbox");
         const authType = createElement("select"); authType.id = "wbs-ai-auth";
@@ -906,6 +1085,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         ].forEach(([labelText, input]) => grid.append(labelFor(labelText, input), input));
         modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Automatisch sendet keine Reasoning-Vorgabe. Niedrig, Mittel und Hoch werden nur für erkannte kompatible Anbieter/Modelle verwendet; nicht unterstützte Vorgaben werden automatisch weggelassen." }));
         modal.appendChild(grid);
+        modal.appendChild(reasoningInfo);
         modal.appendChild(createElement("h3", { text: "Kurse und Berichtswoche" }));
         const courseGrid = createElement("div", { className: "wbs-dmf-grid" });
         const courseSelect = createElement("select"); courseSelect.id = "wbs-course-select";
@@ -971,13 +1151,54 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             [...new Set([chosen, ...models].filter(Boolean))].forEach(model => modelSelect.appendChild(new Option(model, model)));
             modelSelect.value = chosen;
         };
+        let modelDetails = [];
+        const renderReasoningOptions = (capabilities, errorMessage = "") => {
+            const current = findProfile();
+            const normalized = capabilities && capabilities.known ? normalizeReasoningCapabilities(capabilities, selectedModel(current), capabilities.source) : null;
+            reasoningSelect.replaceChildren();
+            reasoningSelect.appendChild(new Option("Automatisch", "auto"));
+            if (normalized && normalized.supported) {
+                const defaultText = normalized.default ? ` (Modellstandard: ${REASONING_LABELS[normalized.default]})` : "";
+                reasoningSelect.options[0].textContent = `Automatisch${defaultText}`;
+                normalized.allowedOptions.forEach(option => reasoningSelect.appendChild(new Option(REASONING_LABELS[option] || option, option)));
+                const selected = getSelectedReasoning(current);
+                reasoningSelect.value = selected !== "auto" && normalized.allowedOptions.includes(selected) ? selected : "auto";
+                reasoningSelect.disabled = false;
+                reasoningInfo.textContent = `Unterstützte Optionen: ${normalized.allowedOptions.map(option => REASONING_LABELS[option] || option).join(", ")}.`;
+            } else if (normalized && normalized.known) {
+                reasoningSelect.replaceChildren(new Option("Automatisch", "auto"), new Option("Nicht unterstützt", "unsupported"));
+                reasoningSelect.value = "unsupported"; reasoningSelect.disabled = true;
+                reasoningInfo.textContent = "Dieses Modell meldet keine Reasoning-/Thinking-Optionen.";
+            } else {
+                reasoningSelect.value = "auto"; reasoningSelect.disabled = false;
+                reasoningInfo.textContent = errorMessage || "Reasoning-Eigenschaften dieses Modells konnten nicht ermittelt werden. Automatisch wird verwendet.";
+            }
+        };
+        const updateReasoningForModel = (profile, errorMessage = "") => {
+            const detail = modelDetails.find(item => item.id === selectedModel(profile) || item.id === profile.model);
+            if (detail && detail.capabilities) {
+                profile.reasoningCapabilities = detail.capabilities;
+                const selected = getSelectedReasoning(profile);
+                if (selected !== "auto" && !detail.capabilities.allowedOptions.includes(selected)) {
+                    profile.reasoning = "auto";
+                    profile.reasoningMode = "auto";
+                }
+                renderReasoningOptions(detail.capabilities);
+            } else {
+                profile.reasoningCapabilities = null;
+                profile.reasoning = "auto";
+                profile.reasoningMode = "auto";
+                renderReasoningOptions(null, errorMessage);
+            }
+        };
         const persistVisibleProfile = () => {
             const current = findProfile();
             if (!current) return;
-            const reasoningSelection = reasoningSelect.value;
+            const reasoningSelection = reasoningSelect.disabled ? "auto" : reasoningSelect.value;
             Object.assign(current, normalizeProfile({ ...current, name: name.value.trim() || current.name, provider: provider.value,
                 baseUrl: baseUrl.value, chatEndpoint: chatEndpoint.value, modelsEndpoint: modelsEndpoint.value,
                 model: modelSelect.value, manualModel: manualModel.value, temperature: temperature.value, maxTokens: maxTokens.value,
+                reasoning: REASONING_VALUES.includes(reasoningSelection) ? reasoningSelection : "auto",
                 reasoningMode: reasoningSelection === "auto" || reasoningSelection === "off" ? reasoningSelection : "on",
                 reasoningEffort: ["low", "medium", "high"].includes(reasoningSelection) ? reasoningSelection : current.reasoningEffort,
                 timeout: timeout.value, authType: authEnabled.checked ? (authType.value === "none" ? "bearer" : authType.value) : "none", token: token.value }));
@@ -991,7 +1212,9 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             chatEndpoint.value = current.chatEndpoint; modelsEndpoint.value = current.modelsEndpoint;
             replaceModelOptions([], current.model); manualModel.value = current.manualModel;
             temperature.value = String(current.temperature); maxTokens.value = String(current.maxTokens);
-            reasoningSelect.value = current.reasoningMode === "auto" ? "auto" : current.reasoningMode === "off" ? "off" : current.reasoningEffort;
+            renderReasoningOptions(current.reasoningCapabilities);
+            const selectedReasoning = getSelectedReasoning(current);
+            if ([...reasoningSelect.options].some(option => option.value === selectedReasoning)) reasoningSelect.value = selectedReasoning;
             timeout.value = String(current.timeout);
             authEnabled.checked = current.authType !== "none"; authType.value = current.authType;
             authType.disabled = !authEnabled.checked; token.value = current.token; token.disabled = !authEnabled.checked; updateWarning();
@@ -1000,14 +1223,19 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             persistVisibleProfile(); const current = findProfile(); status.textContent = "🟡 Verbindung wird geprüft …";
             testButton.disabled = true; modelsButton.disabled = true;
             const result = await testAiConnection(current, { ...settings, debug: debug.checked }); status.textContent = result.message;
+            modelDetails = result.details || [];
             if (result.models.length) {
                 const previous = current.model; replaceModelOptions(result.models, result.models.includes(previous) ? previous : result.models[0]); current.model = modelSelect.value;
             }
+            updateReasoningForModel(current, result.models.length ? "" : "Reasoning-Eigenschaften dieses Modells konnten nicht ermittelt werden.");
             testButton.disabled = false; modelsButton.disabled = false;
             if (!isTest && result.ok && !result.models.length) status.textContent = "🟡 Keine Modelle gefunden; bitte Modell manuell eingeben.";
         };
         renderProfileOptions(); showProfile(); renderCourseOptions(); showCourse(); renderHolidayYear();
         profileSelect.addEventListener("change", () => { persistVisibleProfile(); activeId = profileSelect.value; showProfile(); void runModelRequest(false); });
+        modelSelect.addEventListener("change", () => { persistVisibleProfile(); const current = findProfile(); current.model = modelSelect.value; updateReasoningForModel(current); });
+        manualModel.addEventListener("input", () => { const current = findProfile(); if (current) { current.manualModel = manualModel.value; updateReasoningForModel(current, "Reasoning-Eigenschaften dieses manuell eingetragenen Modells konnten nicht ermittelt werden. Außerdem wird automatisch verwendet."); } });
+        provider.addEventListener("change", () => { persistVisibleProfile(); modelDetails = []; const current = findProfile(); current.provider = provider.value; updateReasoningForModel(current, "Reasoning-Eigenschaften für diesen Anbieter konnten nicht ermittelt werden. Automatisch wird verwendet."); void runModelRequest(false); });
         courseSelect.addEventListener("change", () => { persistVisibleCourse(); activeCourseId = courseSelect.value; showCourse(); });
         courseName.addEventListener("input", () => {
             const current = findCourse();
@@ -1313,9 +1541,9 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         DEFAULT_SYSTEM_PROMPT, LEGACY_DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeCourse, normalizeAiSettings,
         loadAiConfig, saveAiConfig, getAiProfiles, saveAiProfiles, getActiveAiProfile, getActiveCourse,
         selectedModel, joinUrl, buildAuthHeaders, gmRequest, classifyHttpError,
-        parseModelsResponse, getAvailableModels, testAiConnection, detectDayIndex, parseHours, parseDateValue,
+        parseModelsResponse, parseLmStudioModelsResponse, normalizeReasoningCapabilities, getAvailableModels, getLmStudioModels, getModelsForProfile, testAiConnection, detectDayIndex, parseHours, parseDateValue,
         normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
-        extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getReasoningRequestParameters, buildAiRequest, callAi, extractJsonText,
+        extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getSelectedReasoning, getReasoningRequestParameters, buildAiRequest, extractNativeLmStudioContent, callAi, extractJsonText,
         normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };
