@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.0.2
+// @version       2.0.3
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -375,7 +375,12 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const totalHours = parseHours(totalHoursInput && totalHoursInput.value);
         if (reportNumber) result.reportNumber = reportNumber;
         if (totalHours !== null) result.totalHours = totalHours;
-        result.days = days.filter(day => day.hours !== null || day.entries.length > 0);
+        result.days = days.filter((day, index) => {
+            const hasEntries = day.entries.length > 0;
+            const hasPositiveWeekendHours = index >= 5 && typeof day.hours === "number" && day.hours !== 0;
+            const isWeekdayWithHoursField = index < 5 && day.hours !== null;
+            return hasEntries || hasPositiveWeekendHours || isWeekdayWithHoursField;
+        });
         return result;
     }
 
@@ -403,7 +408,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             if (hours > 0 && entries.length === 0) addIssue(weekday, "hours_without_entries", "Stunden sind eingetragen, aber Tätigkeitsbeschreibungen fehlen.");
             if (hours === 0 && entries.length > 0) addIssue(weekday, "entries_without_hours", "Tätigkeiten sind vorhanden, obwohl 0 Stunden eingetragen sind.");
             if (hours !== null && (hours < 0 || hours > 12 || (hours !== 0 && hours !== 8 && hours !== 10))) addIssue(weekday, "unusual_hours", `Der Stundenwert ${hours} ist ungewöhnlich.`, String(hours));
-            if (dayIndex >= 5 && (hours > 0 || entries.length > 0)) addIssue(weekday, "weekend_entry", "Am Wochenende sind Tätigkeiten oder Stunden eingetragen.");
+            const isWeekend = ["samstag", "sonntag"].some(dayName => weekday.toLocaleLowerCase("de-DE").includes(dayName)) || dayIndex >= 5;
+            if (isWeekend && (hours > 0 || entries.length > 0)) addIssue(weekday, "weekend_entry", "Am Wochenende sind Tätigkeiten oder Stunden eingetragen.");
 
             entries.forEach(entry => {
                 const normalized = normalizedEntry(entry);
@@ -662,6 +668,9 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         ].forEach(([labelText, input]) => grid.append(labelFor(labelText, input), input));
         modal.appendChild(grid);
         modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Tokens werden getrennt im lokalen Userscript-Speicher abgelegt. Dieser Speicher ist kein vollwertiger Passwort-Tresor. Berichtsheftinhalte werden nicht gespeichert." }));
+        modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: settings.systemPrompt === DEFAULT_SYSTEM_PROMPT
+            ? "Aktiv ist der eingebaute Standardprompt."
+            : "Aktiv ist dein eigener gespeicherter Systemprompt. Script-Updates überschreiben ihn nicht; nur „Standardprompt wiederherstellen“ ersetzt ihn bewusst." }));
         const externalWarning = createElement("p", { className: "wbs-dmf-warning" }); modal.appendChild(externalWarning);
         const status = createElement("div", { className: "wbs-dmf-status", text: "Verbindung noch nicht getestet." }); modal.appendChild(status);
         const actions = createElement("div", { className: "wbs-dmf-actions" });
@@ -713,7 +722,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             if (!isTest && result.ok && !result.models.length) status.textContent = "🟡 Keine Modelle gefunden; bitte Modell manuell eingeben.";
         };
         renderProfileOptions(); showProfile();
-        profileSelect.addEventListener("change", () => { persistVisibleProfile(); activeId = profileSelect.value; showProfile(); });
+        profileSelect.addEventListener("change", () => { persistVisibleProfile(); activeId = profileSelect.value; showProfile(); void runModelRequest(false); });
         baseUrl.addEventListener("input", updateWarning);
         authEnabled.addEventListener("input", () => {
             if (authEnabled.checked && authType.value === "none") authType.value = "bearer";
@@ -742,6 +751,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             } catch (error) { status.textContent = `🔴 ${error.message}`; }
         });
         name.focus();
+        void runModelRequest(false);
     }
 
     function renderSettingsLauncher(onSaved) {

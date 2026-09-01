@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.0.2
+Stand: Version 2.0.3
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -58,6 +58,8 @@ Namen, E-Mail-Adressen, Benutzer-IDs, Account-IDs und Kommentare werden nicht au
 
 Die Tageszuordnung verwendet zunächst Feld-ID, Feldname, `aria-label`, zugehöriges Label und den nächsten Formularcontainer. Wenn daraus kein Wochentag erkennbar ist, wird die bestehende Reihenfolge der Stunden- und Tätigkeitsfelder verwendet. Es werden höchstens sieben Tage verarbeitet und keine fehlenden Werte erfunden.
 
+Samstag und Sonntag werden bei 0 Stunden und ohne Tätigkeit nicht an die KI übertragen, weil dieser erwartete Leerzustand keine prüfungsrelevante Information ist. Sobald dort Stunden oder eine Tätigkeit vorhanden sind, bleibt der betreffende Wochenendtag in den minimierten Daten und kann lokal sowie durch die KI geprüft werden.
+
 ## Lokale Prüfungen
 
 `validateReport()` arbeitet vollständig offline. Es prüft:
@@ -93,6 +95,8 @@ Der Standard-Timeout beträgt 300.000 ms beziehungsweise fünf Minuten. Beim Upd
 `GM_xmlhttpRequest` führt originübergreifende HTTP-Anfragen aus. Da Profile beliebige, bewusst konfigurierte Hosts unterstützen, benötigt das Script `@connect *`. Das Script kontaktiert trotzdem ausschließlich die im aktiven Profil gespeicherte Adresse und enthält keine Telemetrie, Analytics oder Fehlerberichte.
 
 `testAiConnection()` ruft den Models-Endpunkt auf, prüft HTTP-Status und JSON-Struktur und extrahiert IDs beziehungsweise Namen. Unterstützt werden OpenAI-Listen unter `data`, Listen unter `models` sowie direkte Arrays. Bearer Tokens werden als `Authorization: Bearer …`, API Keys als `X-API-Key` gesendet.
+
+Der Einstellungsdialog lädt die Modelle des aktiven Profils direkt beim Öffnen und erneut bei einem Profilwechsel. Die manuelle Aktualisierung bleibt zusätzlich verfügbar.
 
 `callAi()` sendet eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
 

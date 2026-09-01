@@ -205,6 +205,30 @@ test("extrahiert ausschließlich minimierte Berichtsdaten aus dem DOM-Vertrag", 
     assert.equal(JSON.stringify(report).includes("E-Mail"), false);
 });
 
+test("überträgt leere Wochenenden nicht, behält echte Wochenendeinträge aber bei", () => {
+    const makeField = (id, name, value, ariaLabel = "") => ({
+        id, name, value,
+        getAttribute: attribute => attribute === "aria-label" ? ariaLabel : "",
+        closest: () => ({ textContent: id })
+    });
+    const dayIds = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag"];
+    const hours = dayIds.map((day, index) => makeField(`${day}_hours`, `${day}_hours`, index < 5 ? "8" : "0", "Stunden / UE"));
+    const entries = dayIds.map((day, index) => makeField(`${day}_text_1`, `${day}_text_1`, index < 5 ? `Konkrete Tätigkeit ${index + 1} nachvollziehbar bearbeitet` : ""));
+    const root = {
+        querySelector: selector => selector.includes("Berichtsnummer") ? makeField("number", "number", "014", "Berichtsnummer") : selector === "#total_hours" ? makeField("total_hours", "total_hours", "40") : null,
+        querySelectorAll: selector => selector.includes("Stunden / UE") ? hours : entries
+    };
+    const report = extractReportData(root);
+    assert.deepEqual(report.days.map(day => day.weekday), ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]);
+    assert.equal(JSON.stringify(report).includes("Samstag"), false);
+    assert.equal(JSON.stringify(report).includes("Sonntag"), false);
+
+    entries[5].value = "Plausible Tätigkeit am Samstag dokumentiert";
+    const reportWithSaturday = extractReportData(root);
+    assert.equal(reportWithSaturday.days.some(day => day.weekday === "Samstag"), true);
+    assert.equal(validateReport(reportWithSaturday).some(issue => issue.type === "weekend_entry"), true);
+});
+
 test("findet lokale Auffälligkeiten unabhängig von einer KI", () => {
     const issues = validateReport({
         reportNumber: "9",
@@ -397,6 +421,7 @@ test("enthält die benötigten Userscript-Rechte und stabilen WBS-DOM-Verträge"
         'cmd[reportstrainer.savereject]'
     ].forEach(selectorPart => assert.equal(userscriptSource.includes(selectorPart), true, selectorPart));
     ["formalIssues", "contentIssues", "hourIssues", "notes"].forEach(field => assert.equal(userscriptSource.includes(field), true, field));
+    assert.equal((userscriptSource.match(/void runModelRequest\(false\);/g) || []).length >= 2, true, "automatisches Modellladen");
 });
 
 (async () => {
