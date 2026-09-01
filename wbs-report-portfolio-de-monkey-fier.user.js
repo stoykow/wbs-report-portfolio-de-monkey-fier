@@ -65,6 +65,8 @@ Die Begriffe FPA, Prüfung, Test, Wiederholung und Vorbereitung sind für sich a
 
 Die Berichtsnummer muss dreistellig sein. Melde eine ein- oder zweistellige Berichtsnummer ausschließlich unter formalIssues und nenne die mit führenden Nullen ergänzte Form, beispielsweise 14 als 014.
 
+Der Abschnitt beziehungsweise das Modul muss im Bericht vollständig ausgeschrieben und eindeutig angegeben sein. Eine reine Abkürzung oder ein fehlender Modulname ist als formale Auffälligkeit unter formalIssues zu melden.
+
 Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere Hinweise sachlich, kurz und konstruktiv. Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, formalIssues, contentIssues, hourIssues, notes und suggestedComment. Formale Auffälligkeiten, inhaltliche Auffälligkeiten und Stundenauffälligkeiten müssen in den jeweils passenden Arrays stehen. Neutrale Hinweise gehören ausschließlich in notes. Einträge dürfen day, type, original, message und suggestion enthalten.`;
 
     const DEFAULT_PROFILE = Object.freeze({

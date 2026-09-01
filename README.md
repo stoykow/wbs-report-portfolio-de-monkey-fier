@@ -81,6 +81,8 @@ In den Einstellungen lassen sich folgende Werte ohne Änderung des Quellcodes be
 - zentraler Systemprompt
 - optionaler Debug-Modus
 
+Der eingebaute Systemprompt verlangt außerdem, dass Abschnitt beziehungsweise Modul vollständig ausgeschrieben und eindeutig angegeben werden.
+
 Beim Öffnen der KI-Einstellungen und beim Wechsel des Profils wird die Modellliste automatisch geladen. „Verbindung testen“ prüft den Models-Endpunkt zusätzlich; „Modelle neu laden“ bleibt für eine manuelle Aktualisierung verfügbar. Wenn ein Server keine Modellliste unterstützt, kann der Modellname manuell eingetragen werden.
 
 Jedes KI-Profil besitzt die Auswahl „Reasoning / Thinking“. Bei LM Studio werden die Optionen des ausgewählten Modells automatisch über `/api/v1/models` aus `capabilities.reasoning.allowed_options` geladen; der Modellstandard wird neben „Automatisch“ angezeigt. „Automatisch“ sendet keine Reasoning-Vorgabe. Nicht unterstützte Optionen werden nicht angeboten beziehungsweise deaktiviert. Fällt der native Capabilities-Endpunkt aus, bleibt die Auswahl sicher auf „Automatisch“ und der konfigurierbare `/v1/models`-Endpunkt wird als Fallback verwendet. LM-Studio-Anfragen gehen anschließend nativ an `/api/v1/chat` und verwenden `max_output_tokens`; andere Provider bleiben bei Chat-Completions mit `max_tokens`.

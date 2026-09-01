@@ -63,6 +63,11 @@ test("liefert die LM-Studio-Gateway-Standardkonfiguration ohne eingebettetes Tok
     assert.equal(settings.profiles[0].token, "");
 });
 
+test("fordert im Standardprompt ein ausgeschriebenes Modul", () => {
+    assert.match(DEFAULT_SYSTEM_PROMPT, /vollständig ausgeschrieben und eindeutig angegeben/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /fehlender Modulname/);
+});
+
 test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
     const settings = normalizeAiSettings({
         activeProfileId: "nicht-vorhanden",
