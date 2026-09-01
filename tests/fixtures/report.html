@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <title>Synthetisches eCampus-Testformular</title>
+    <script>
+        const gmStore = new Map();
+        window.GM_getValue = (key, fallback) => gmStore.has(key) ? gmStore.get(key) : fallback;
+        window.GM_setValue = (key, value) => gmStore.set(key, value);
+        window.GM_xmlhttpRequest = options => {
+            const isModels = options.method === "GET";
+            const responseText = isModels
+                ? JSON.stringify({ data: [{ id: "synthetic-model" }] })
+                : JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+                    status: "warning",
+                    summary: "Ein synthetischer Hinweis.",
+                    issues: [{ day: "Dienstag", type: "too_generic", original: "Server", message: "Die Tätigkeit ist zu allgemein.", suggestion: "Bitte genauer beschreiben." }],
+                    suggestedComment: "Dienstag: Bitte die Tätigkeit genauer beschreiben."
+                }) } }] });
+            setTimeout(() => options.onload({ status: 200, responseText }), 20);
+        };
+    </script>
+</head>
+<body>
+    <h1>Synthetisches Berichtsheft</h1>
+    <form id="form_">
+        <div>
+            <div class="form-group">
+                <label for="number">Berichtsnummer</label>
+                <input id="number" aria-label="Berichtsnummer" value="34">
+            </div>
+            <div class="form-group">
+                <label for="montag_text_1">Montag Tätigkeit</label>
+                <input id="montag_text_1" name="montag_text_1" value="Installation einer Testumgebung">
+                <label for="montag_hours">Montag Stunden</label>
+                <input id="montag_hours" aria-label="Stunden / UE" value="8">
+            </div>
+            <div class="form-group">
+                <label for="dienstag_text_1">Dienstag Tätigkeit</label>
+                <input id="dienstag_text_1" name="dienstag_text_1" value="Server">
+                <label for="dienstag_hours">Dienstag Stunden</label>
+                <input id="dienstag_hours" aria-label="Stunden / UE" value="8">
+            </div>
+            <div class="form-group">
+                <label for="total_hours">Gesamtstunden</label>
+                <input id="total_hours" value="16">
+            </div>
+            <div class="form-group">
+                <div><textarea id="remarks"></textarea></div>
+            </div>
+            <input name="cmd[reportstrainer.saveaccept]" type="button" value="Annehmen">
+            <input name="cmd[reportstrainer.savereject]" type="button" value="Ablehnen">
+            <div class="ilFormFooter clearfix">
+                <div class="col-sm-6 ilFormCmds"><input type="button" value="Speichern"></div>
+            </div>
+        </div>
+    </form>
+    <script src="../../wbs-report-portfolio-de-monkey-fier.user.js"></script>
+</body>
+</html>

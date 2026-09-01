@@ -1,82 +1,154 @@
 # WBS Berichtsheft de-monkey-fier
 
+Ein Violentmonkey-Userscript für Ausbilderinnen und Ausbilder im WBS eCampus. Es ergänzt den bestehenden Berichtsheft-Workflow um lokale Prüfungen, Kommentarhilfen und einen optionalen KI-Assistenten für OpenAI-kompatible Server.
+
+Die KI ist eine Assistenzfunktion. Sie nimmt keine Berichtshefte an, gibt keine Berichtshefte zurück und speichert oder sendet keine Formulare.
+
 ## Installation
 
-1. [Violentmonkey](https://violentmonkey.github.io/) Browser-Plugin installieren. [Was macht das?](#was-ist-client-side-scripting-hacke-ich-damit-unsere-server) ([Probleme mit Chrome?](#warum-funktioniert-es-auf-chrome-nicht-aka-geht-das-auch-mit-den-manifest-v2-änderungen))
+1. [Violentmonkey](https://violentmonkey.github.io/) installieren.
+2. [Userscript aus diesem Fork öffnen](https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js).
+3. In Violentmonkey „Installieren“ wählen.
+4. Die Berichtsheftübersicht oder ein Berichtsheft im WBS eCampus öffnen.
 
-2. [Den Text vom Script im Browser betrachten](https://github.com/AaronKuehne/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js), Violentmonkey erkennt ein Plugin-Script und ermöglicht die Installation.
+![Installation in Violentmonkey](./docs/installieren.png)
 
-3. Den grünen Knopf "Installieren" klicken.
+Bei einer neuen Version kann das Script in Violentmonkey über „Aktualisieren“ neu geladen werden.
 
-    ![](./docs/installieren.png)
-
-4. (optional)
-    <details>
-    <summary>Bei einer Anpassung hier im Repo, kannst Du einfach Dein Script aktuallisieren.</summary>
-
-    ![](./docs/custom-config/öffnen.png)
-
-    ![](./docs/aktualisieren.png)
-
-    </details>
-
-## Funktionen
+## Bestehende Workflow-Hilfen
 
 ### Berichtsheftübersicht
 
-* **Schnellzugriff** auf das nächste Berichtsheft, auch im neuen Tab. Der zweite Klick auf *in neuem Tab öffnen* öffnet das Heft der zweiten Zeile usw.
+- Schnellzugriff auf das nächste Berichtsheft im aktuellen oder in einem neuen Tab
+- automatischer Filter auf eingereichte Berichtshefte, wenn zuvor „Alle“ gewählt war
+- Warnung bei einem abweichenden Filter
+- deaktivierte Annahme- und Rückgabeaktionen im Kontextmenü zum Schutz vor versehentlichen Klicks
 
-    ![](./docs/öffnen-fenster.png)
-    ![](./docs/öffnen-tab.png)
+### Einzelnes Berichtsheft
 
-* **Autofilter**: Wenn die Übersichtsseite mit der Filterauswahl *Alle* geöffnet wird, wird automatisch *Eingereicht* ausgewählt und gefiltert. Bei anderen Filtern bekommst du einen Hinweis, damit Du nicht ausversehen alte Hefte bearbeitest.
+- deutlich unterscheidbare Buttons für „Annehmen“ und „Zurückgeben“
+- umschaltbare Kommentarvorlagen
+- konfigurierbare Schlagwortsuche mit Markierungen
+- Prüfung der dreistelligen Berichtsnummer
+- Prüfung von Tages- und Gesamtstunden
+- zusätzliche lokale Hinweise zu leeren Arbeitstagen, kurzen oder wiederholten Beschreibungen, Tätigkeiten ohne Stunden, ungewöhnlichen Stunden, Wochenendeinträgen und Abwesenheiten
 
-    ![](./docs/filter-nicht-eingereicht.png)
+Alle Prüfungen sind Hinweise und ersetzen keine manuelle Beurteilung.
 
-* **Deaktivierte Aktionen** im Kontextmenü um das Annehmen oder Ablehnen zu verhindern, wenn man die Berichtshefte doch nur lesen wollte.
+## KI-Assistent
 
-    ![](./docs/aktion-deaktiviert.png)
+Auf einem geöffneten Berichtsheft erscheint der Bereich „🤖 KI-Assistent“. Die Schaltfläche „⚙ KI-Einstellungen“ ist außerdem unten rechts verfügbar.
 
-### Berichtsheft bearbeiten
+Der Assistent kann unter anderem auf folgende Punkte hinweisen:
 
-* **Annehmen- und Zurückgeben-Buttons** sind jetzt besser unterscheidbar.
+- zu allgemeine oder sehr kurze Tätigkeitsbeschreibungen
+- fehlende Informationen und mögliche Rückfragen
+- Wiederholungen und erkennbare Widersprüche
+- unklare FPA-Einträge
+- auffällige Abwesenheiten
+- Stundenangaben
 
-    ![](./docs/button-reskin.png)
+Eine KI-Prüfung startet ausschließlich nach einem Klick auf „Mit KI prüfen“.
 
-* **Schablonen für Kommentare**: unter dem Kommentarfeld findest Du jetzt vorgefertigte Schablonen. Mit einem Klick auf eine Schablone, wird diese ans Kommentar angehangen, oder aus dem Kommentar entfert, sollte sie bereits enthalten sein. (Klick -> An/Aus der Schablone). Diese Vorgang sollte manuellen Text unbeeinflusst lassen. [Die Schablonen kannst Du ganz nach eigenem Dünken anpassen.](#erweiterte-konfiguration)
-Mit einem Klick auf \*Leere\* wird das Kommentarfeld schnell gesäubert.
+## KI-Konfiguration
 
-    ![](./docs/schablonen.png)
+Die Standardkonfiguration ist für einen lokalen LM-Studio-Server vorbereitet:
 
-* **Schlagwortsuche**: Gefundene (auch Teil-) Wörter werden an ihrem Eintrag hervorgehoben. Groß- und Kleinschreibung wird hier ignoriert. [Die Schlagworte kannst Du anpassen.](#erweiterte-konfiguration)
+```text
+Anbieter:        LM Studio
+Server:          http://192.168.113.1:1234
+Models Endpoint: /v1/models
+Chat Endpoint:   /v1/chat/completions
+Temperature:     0.2
+Timeout:         60000 ms
+Authentifizierung: Keine
+```
 
-    ![](./docs/schlagwort.png)
+In den Einstellungen lassen sich folgende Werte ohne Änderung des Quellcodes bearbeiten:
 
-* **Validierungen**: Ein Paar Validierungen werden automatisch aufgelöst. Natürlich sind das nur Hilfestellungen. Eine Warnung heißt nicht, dass das BH wirklich ein Problem hat und keine Warnungen zeigen kein perfektes BH an.
+- KI-Unterstützung aktivieren oder deaktivieren
+- Anbieter: LM Studio, OpenAI-kompatible API oder benutzerdefiniert
+- Serveradresse und Endpunkte
+- automatisch geladene oder manuell eingegebene Modelle
+- Temperature und Timeout
+- keine Authentifizierung, Bearer Token oder API Key
+- zentraler Systemprompt
+- optionaler Debug-Modus
 
-    ![](./docs/validierung/nummer.png)
+„Verbindung testen“ prüft den Models-Endpunkt. „Modelle neu laden“ übernimmt gefundene Modelle in das Dropdown. Wenn ein Server keine Modellliste unterstützt, kann der Modellname manuell eingetragen werden.
 
-    ![](./docs/validierung/ues.png)
+### KI-Profile
 
-    ![](./docs/validierung/ues-total.png)
+Mehrere Serverkonfigurationen werden vollständig unterstützt. Profile können erstellt, ausgewählt, bearbeitet und gelöscht werden, beispielsweise für Büro, Zuhause oder einen Testserver. Das aktive Profil bestimmt Server, Modell und Authentifizierung.
 
-## Erweiterte Konfiguration
+## LM Studio einrichten
 
-Am Anfang vom Script stehen zwei Konstante Listen. Einmal die Texte der Kommentar-Schablonen und einmal die Schlagwörter zum Hervorheben. Nach dem Anpassen speicherst Du das Script und bestätigst, dass Du es überschreiben möchtest.
+1. LM Studio starten.
+2. Ein geeignetes Chat-Modell herunterladen und laden.
+3. Den lokalen API-Server starten.
+4. Für Zugriff von einem anderen Rechner den Netzwerkzugriff in LM Studio erlauben.
+5. Standardmäßig Port `1234` verwenden.
+6. Im Userscript `http://192.168.113.1:1234` beziehungsweise die tatsächliche lokale IP-Adresse konfigurieren.
+7. „Verbindung testen“ und anschließend ein Modell auswählen.
 
-![](./docs/custom-config/öffnen.png)
-![](./docs/custom-config/bearbeiten.png)
-![](./docs/custom-config/config.png)
+Firewall und LM-Studio-Einstellungen müssen Verbindungen aus dem lokalen Netzwerk zulassen. Falls nur derselbe Rechner zugreift, kann beispielsweise `http://localhost:1234` verwendet werden.
 
-> [!WARNING]
-> Wenn Du über Violentmonkey den WBS Berichtsheft de-monkey-fier aktualisiert, wird deine Konfiguration wieder überschrieben.
+## Authentifizierung
+
+Aktuell benötigt die vorbereitete LM-Studio-Konfiguration kein Token. Für andere Server stehen zwei Varianten bereit:
+
+- Bearer Token: `Authorization: Bearer <Token>`
+- API Key: `X-API-Key: <Token>`
+
+Tokens gehören niemals in den Quellcode, in Git, in Screenshots oder in Fehlerberichte. Das Script speichert Tokens getrennt von den normalen Profileinstellungen im lokalen Violentmonkey-Speicher. Dieser Speicher ist kein vollwertiger Passwort-Tresor; auf gemeinsam genutzten oder nicht vertrauenswürdigen Browserprofilen sollten keine dauerhaften Tokens hinterlegt werden.
+
+## Datenschutz und Datenminimierung
+
+Berichtsheftdaten können personenbezogen sein. Deshalb gilt:
+
+- Standardziel ist ausschließlich der lokale Server `192.168.113.1`.
+- Bei möglicherweise externen Servern erscheint eine deutliche Warnung.
+- Übertragen werden nur Berichtsnummer, Gesamtstunden sowie Wochentage mit Stunden und vorhandenen Tätigkeitsbeschreibungen.
+- Namen, E-Mail-Adressen, Benutzer-IDs, Account-IDs und sonstige Metadaten werden nicht extrahiert.
+- Berichtsheftinhalte werden nicht dauerhaft gespeichert.
+- Es gibt keine Telemetrie, Analytics oder externen Fehlerberichte.
+- Der Debug-Modus protokolliert keine Tokens, Berichtsheftinhalte oder personenbezogenen Daten.
+
+Das Metadata-Feld `@connect *` ist erforderlich, damit bewusst angelegte Profile unterschiedliche Hosts verwenden können. Das Script sendet dennoch ausschließlich an die im aktiven Profil konfigurierte Adresse und nur nach einer ausdrücklichen Benutzeraktion.
+
+## Strukturierte KI-Antwort
+
+Der Systemprompt fordert ein JSON-Objekt mit `status`, `summary`, `issues` und `suggestedComment`. JSON in Markdown-Codeblöcken wird ebenfalls verarbeitet. Ungültige oder leere Antworten führen nur zu einer Fehlermeldung im KI-Bereich; lokale Prüfungen und der restliche Workflow bleiben funktionsfähig.
+
+Der Standardprompt verbietet ausdrücklich, fehlende Tätigkeiten oder Zusammenhänge zu erfinden. Bei unklaren Einträgen soll die KI eine genauere Beschreibung anfordern.
+
+## Kommentarvorschläge
+
+Der KI-Vorschlag erscheint zunächst in einem bearbeitbaren Vorschaufeld. Erst „Kommentar übernehmen“ schreibt ihn in das vorhandene Kommentarfeld. Wenn dort bereits Text steht, kann zwischen „Anhängen“, „Ersetzen“ und „Abbrechen“ gewählt werden. Das Formular wird dabei nicht gespeichert oder abgesendet.
+
+## Entwicklung und Tests
+
+Voraussetzung für die automatisierten Tests ist eine aktuelle Node.js-Version.
+
+```powershell
+node --check .\wbs-report-portfolio-de-monkey-fier.user.js
+node .\tests\userscript.test.js
+```
+
+Die Tests decken Konfigurationsnormalisierung, URL- und Authentifizierungslogik, Modelllisten, Stundenwerte, lokale Prüfungen, Anfrageaufbau, JSON-Parsing, Kommentarerzeugung und die Erkennung lokaler Server ab.
+
+Die vollständige Bestandsanalyse, DOM-Selektoren und Modulgrenzen stehen in [docs/ARCHITEKTUR.md](./docs/ARCHITEKTUR.md).
+
+## Erweiterte klassische Konfiguration
+
+Die Listen `commentTemplates` und `commentPOIs` am Anfang des Userscripts können weiterhin direkt angepasst werden. Profile und KI-Einstellungen sollten dagegen über die Oberfläche verwaltet werden, damit sie bei Script-Updates im Violentmonkey-Speicher erhalten bleiben.
 
 ## FAQ
 
-#### Was ist Client-Side-Scripting, hacke ich damit unsere Server?
+### Verändert das Script WBS-Serverdaten?
 
-Nachdem die Webseite geladen wurde, ändert das Script lokal Deine Seite in Deinem Browser. Stell es Dir wie eine Zusätzliche Ebene vor. Darunter ist immernoch die alte Seite, es passiert nichts verbotenes hier.
+Das Script erweitert nach dem Laden lokal die Darstellung im Browser. Nur vorhandene WBS-Formularaktionen können wie zuvor durch den Benutzer ausgelöst werden. Der KI-Assistent selbst löst keine Annahme, Rückgabe, Speicherung oder Übermittlung aus.
 
-#### Warum funktioniert es auf Chrome nicht? (Aka. Geht das auch mit den Manifest V2 änderungen?)
+### Warum funktioniert es möglicherweise nicht mit Chrome?
 
-Es könnte Probleme mit Chrome geben. Wähle ggf. einen anderen Browser. Statt Violentmonkey könnte [ScriptCat](https://scriptcat.org/de) funktionieren.
+Je nach Browser- und Manifest-Version kann es Einschränkungen bei Userscript-Erweiterungen geben. In diesem Fall einen unterstützten Browser oder alternativ eine kompatible Userscript-Verwaltung wie ScriptCat prüfen.
