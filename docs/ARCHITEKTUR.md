@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.2.0
+Stand: Version 2.2.1
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -107,6 +107,8 @@ Der Standard-Timeout beträgt 900.000 ms beziehungsweise fünfzehn Minuten. Beim
 Der Einstellungsdialog lädt die Modelle des aktiven Profils direkt beim Öffnen und erneut bei einem Profilwechsel. Die manuelle Aktualisierung bleibt zusätzlich verfügbar.
 
 Reasoning wird je Profil als `reasoningMode` (`auto`, `off`, `on`) und `reasoningEffort` (`low`, `medium`, `high`) gespeichert. `auto` ergänzt keine Vorgabe. Für erkannte OpenAI-Reasoning-Modelle werden bei `on` die passenden `reasoning_effort`-Werte gesendet; `none` wird nur bei GPT-5.1 für „Aus“ verwendet. Bei LM Studio `gpt-oss` über den bestehenden Chat-Completions-Endpunkt wird die unterstützte Harmony-Systemanweisung nur temporär an den Request angehängt. Unbekannte Anbieter und Modelle erhalten keine zusätzlichen Parameter. Lehnt ein unterstützter Server den Parameter mit 400, 404 oder 422 ab, erfolgt ein einmaliger Fallback ohne ihn.
+
+Die strukturierte KI-Ausgabe wird in kompakten Tageszeilen gerendert: Original, Erklärung und optionaler Vorschlag stehen ohne redundante Zwischenüberschriften zusammen. `notes` bleiben als beiläufige Hinweise getrennt.
 
 `callAi()` sendet eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
 

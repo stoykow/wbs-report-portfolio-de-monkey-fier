@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.2.0
+// @version       2.2.1
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -837,9 +837,11 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             .wbs-dmf-ai-status-ok { border-left-color: #2e7d32; color: #1b5e20; }
             .wbs-dmf-ai-status-warning { border-left-color: #e2a400; color: #7a5600; }
             .wbs-dmf-ai-status-critical { border-left-color: #c62828; color: #8e0000; }
-            .wbs-dmf-issue { margin: 8px 0; padding: 9px; background: #fff; border-left: 4px solid #e2a400; }
+            .wbs-dmf-issue { margin: 5px 0; padding: 7px 9px; background: #fff; border-left: 3px solid #e2a400; }
             .wbs-dmf-issue-critical { border-left-color: #c62828; }
-            .wbs-dmf-original { margin: 5px 0; padding-left: 8px; border-left: 2px solid #bbb; font-style: italic; }
+            .wbs-dmf-original { margin: 3px 0; color: #555; font-style: italic; }
+            .wbs-dmf-detail { margin-top: 3px; }
+            .wbs-dmf-suggestion { margin-top: 3px; color: #555; font-size: .94em; }
             .wbs-dmf-note-list { margin: 8px 0; padding: 9px 9px 9px 28px; background: #eef3f6; border-left: 4px solid #78909c; }
             .wbs-dmf-comment-preview { width: 100%; min-height: 100px; margin-top: 8px; box-sizing: border-box; }
             @media (max-width: 640px) { .wbs-dmf-grid { grid-template-columns: 1fr; } }
@@ -1120,10 +1122,11 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
 
     function renderAiIssueBox(container, issue, status) {
         const box = createElement("article", { className: `wbs-dmf-issue ${status === "critical" ? "wbs-dmf-issue-critical" : ""}` });
-        box.appendChild(createElement("strong", { text: `${issue.day}: ${aiIssueTypeLabel(issue.type)}` }));
-        if (issue.original) box.appendChild(createElement("div", { className: "wbs-dmf-original", text: `Original: „${issue.original}“` }));
-        box.appendChild(createElement("div", { text: issue.message }));
-        if (issue.suggestion) box.appendChild(createElement("div", { text: `Hinweis: ${issue.suggestion}` }));
+        const title = [issue.day, aiIssueTypeLabel(issue.type)].filter(Boolean).join(" · ");
+        box.appendChild(createElement("strong", { text: title }));
+        if (issue.original) box.appendChild(createElement("div", { className: "wbs-dmf-original", text: `„${issue.original}“` }));
+        if (issue.message) box.appendChild(createElement("div", { className: "wbs-dmf-detail", text: issue.message }));
+        if (issue.suggestion && issue.suggestion !== issue.message) box.appendChild(createElement("div", { className: "wbs-dmf-suggestion", text: `→ ${issue.suggestion}` }));
         container.appendChild(box);
     }
 

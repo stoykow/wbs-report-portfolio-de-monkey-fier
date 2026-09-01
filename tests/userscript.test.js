@@ -472,7 +472,7 @@ test("rendert strukturierte Bereiche widerspruchsfrei und Inhalt nach Wochentag"
         summary: "Formale Auffälligkeiten im Bericht.",
         formalIssues: ["Bitte die Berichtsnummer dreistellig als 014 eintragen."],
         contentIssues: [
-            { day: "Freitag", type: "missing_information", message: "Freitag ergänzen." },
+            { day: "Freitag", type: "missing_information", message: "Freitag ergänzen.", suggestion: "Thema kurz nennen." },
             { day: "Dienstag", type: "too_generic", original: "Projektarbeit", message: "Dienstag ergänzen." }
         ],
         hourIssues: ["Gesamtstunden prüfen."],
@@ -488,7 +488,9 @@ test("rendert strukturierte Bereiche widerspruchsfrei und Inhalt nach Wochentag"
     assert.equal(combined.includes("Hinweise"), true);
     assert.equal(combined.includes("KI-Auffälligkeiten: 4"), true);
     assert.equal(combined.includes("Keine Auffälligkeiten gemeldet."), false);
-    assert.equal(combined.indexOf("Dienstag: Tätigkeit zu allgemein") < combined.indexOf("Freitag: Fehlende Information"), true);
+    assert.equal(combined.indexOf("Dienstag · Tätigkeit zu allgemein") < combined.indexOf("Freitag · Fehlende Information"), true);
+    assert.equal(combined.includes("Original:"), false);
+    assert.equal(combined.includes("→"), true);
     assert.equal(container.children[0].className.includes("wbs-dmf-ai-status-warning"), true);
     const localContainer = new FakeElement("div");
     renderLocalResults(localContainer, [{ day: "Berichtsnummer", message: "Bitte die Berichtsnummer dreistellig als 014 eintragen.", original: "14" }]);

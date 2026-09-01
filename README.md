@@ -85,6 +85,8 @@ Beim Öffnen der KI-Einstellungen und beim Wechsel des Profils wird die Modellli
 
 Jedes KI-Profil besitzt die Auswahl „Reasoning / Thinking“ mit „Automatisch“, „Aus“, „Niedrig“, „Mittel“ und „Hoch“. „Automatisch“ sendet keine Reasoning-Vorgabe. Niedrig, Mittel und Hoch werden nur für erkannte kompatible Anbieter und Modelle verwendet. Nicht unterstützte Parameter werden weggelassen; wenn ein Server eine erkannte Vorgabe trotzdem ablehnt, wird die Anfrage einmal ohne diese Vorgabe wiederholt.
 
+Die KI-Details werden kompakt als Tageszeile mit Original und kurzer Erläuterung beziehungsweise Vorschlag dargestellt. Neutrale Hinweise bleiben separat und werden nicht als Auffälligkeiten gezählt.
+
 ### KI-Profile
 
 Mehrere Serverkonfigurationen werden vollständig unterstützt. Profile können erstellt, ausgewählt, bearbeitet und gelöscht werden, beispielsweise für Büro, Zuhause oder einen Testserver. Das aktive Profil bestimmt Server, Modell und Authentifizierung.
