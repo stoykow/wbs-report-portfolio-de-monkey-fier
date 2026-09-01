@@ -7,6 +7,7 @@ const {
     DEFAULT_SYSTEM_PROMPT,
     LEGACY_DEFAULT_SYSTEM_PROMPT,
     defaultAiSettings,
+    normalizeCourse,
     normalizeAiSettings,
     loadAiConfig,
     saveAiConfig,
@@ -18,6 +19,12 @@ const {
     parseModelsResponse,
     detectDayIndex,
     parseHours,
+    normalizeDateValue,
+    calculateCourseWeek,
+    formatExpectedReportNumber,
+    getGermanHolidays,
+    getHolidaysInRange,
+    extractReportPeriod,
     extractReportData,
     reportNumberMessage,
     validateReport,
@@ -39,13 +46,16 @@ const userscriptSource = fs.readFileSync(userscriptPath, "utf8");
 const tests = [];
 const test = (name, callback) => tests.push({ name, callback });
 
-test("liefert die lokale LM-Studio-Standardkonfiguration", () => {
+test("liefert die LM-Studio-Gateway-Standardkonfiguration ohne eingebettetes Token", () => {
     const settings = defaultAiSettings();
     assert.equal(settings.enabled, true);
-    assert.equal(settings.profiles[0].baseUrl, "http://192.168.113.1:1234");
+    assert.equal(settings.profiles[0].baseUrl, "https://llm.nik0.de");
     assert.equal(settings.profiles[0].chatEndpoint, "/v1/chat/completions");
     assert.equal(settings.profiles[0].modelsEndpoint, "/v1/models");
-    assert.equal(settings.profiles[0].timeout, 300000);
+    assert.equal(settings.profiles[0].timeout, 900000);
+    assert.equal(settings.profiles[0].maxTokens, 500);
+    assert.equal(settings.profiles[0].authType, "bearer");
+    assert.equal(settings.profiles[0].token, "");
 });
 
 test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
@@ -55,17 +65,17 @@ test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
     });
     assert.equal(settings.activeProfileId, "test");
     assert.equal(settings.profiles[0].baseUrl, "http://localhost:1234");
-    assert.equal(settings.profiles[0].timeout, 300000);
+    assert.equal(settings.profiles[0].timeout, 900000);
     assert.equal(getActiveAiProfile(settings).id, "test");
 });
 
-test("migriert nur den alten Standard-Timeout einmalig auf fünf Minuten", () => {
+test("migriert frühere Standard-Timeouts einmalig auf fünfzehn Minuten", () => {
     const oldSettings = normalizeAiSettings({
         schemaVersion: 1,
         profiles: [{ id: "alt", name: "Alt", timeout: 60000 }]
     });
-    assert.equal(oldSettings.schemaVersion, 3);
-    assert.equal(oldSettings.profiles[0].timeout, 300000);
+    assert.equal(oldSettings.schemaVersion, 4);
+    assert.equal(oldSettings.profiles[0].timeout, 900000);
 
     const currentSettings = normalizeAiSettings({
         schemaVersion: 2,
@@ -73,14 +83,20 @@ test("migriert nur den alten Standard-Timeout einmalig auf fünf Minuten", () =>
     });
     assert.equal(currentSettings.profiles[0].timeout, 60000);
 
+    const fiveMinuteSettings = normalizeAiSettings({
+        schemaVersion: 3,
+        profiles: [{ id: "alt-fünf", name: "Alt fünf", timeout: 300000 }]
+    });
+    assert.equal(fiveMinuteSettings.profiles[0].timeout, 900000);
+
     const storage = new Map([["wbsDeMonkeyFier.ai.settings.v1", {
         schemaVersion: 1,
         profiles: [{ id: "gespeichert", name: "Gespeichert", timeout: 60000 }]
     }]]);
     global.GM_getValue = (key, fallback) => storage.has(key) ? storage.get(key) : fallback;
     global.GM_setValue = (key, value) => storage.set(key, value);
-    assert.equal(loadAiConfig().profiles[0].timeout, 300000);
-    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 3);
+    assert.equal(loadAiConfig().profiles[0].timeout, 900000);
+    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 4);
     delete global.GM_getValue;
     delete global.GM_setValue;
 });
@@ -132,12 +148,12 @@ test("erzeugt Authentifizierungsheader ohne Tokens preiszugeben", () => {
 test("klassifiziert relevante HTTP-Fehler verständlich", () => {
     assert.match(classifyHttpError(401).message, /Authentifizierung/);
     assert.match(classifyHttpError(404).message, /Endpunkt/);
-    assert.match(classifyHttpError(504).message, /Zeitüberschreitung/);
+    assert.match(classifyHttpError(504).message, /serverseitigen Zeitlimits/);
     assert.equal(classifyHttpError(200), null);
 });
 
 test("testet Modellverbindung, Authentifizierungsfehler und Timeout über die Userscript-API", async () => {
-    const profile = defaultAiSettings().profiles[0];
+    const profile = { ...defaultAiSettings().profiles[0], authType: "none" };
     global.GM_xmlhttpRequest = options => options.onload({ status: 200, responseText: '{"data":[{"id":"modell-a"}]}' });
     const connected = await testAiConnection(profile, { debug: false });
     assert.equal(connected.ok, true);
@@ -151,7 +167,7 @@ test("testet Modellverbindung, Authentifizierungsfehler und Timeout über die Us
     global.GM_xmlhttpRequest = options => options.ontimeout();
     const timedOut = await testAiConnection(profile, { debug: false });
     assert.equal(timedOut.ok, false);
-    assert.match(timedOut.message, /Zeitüberschreitung/);
+    assert.match(timedOut.message, /Browser.*abgebrochen/);
     delete global.GM_xmlhttpRequest;
 });
 
@@ -167,6 +183,38 @@ test("verarbeitet deutsche Dezimalstunden", () => {
     assert.equal(parseHours("7,5"), 7.5);
     assert.equal(parseHours(""), null);
     assert.equal(parseHours("acht"), null);
+});
+
+test("berechnet alle deutschen Feiertagsvarianten vollständig lokal", () => {
+    const holidays = getGermanHolidays(2026);
+    const byName = Object.fromEntries(holidays.map(holiday => [holiday.name, holiday]));
+    assert.equal(byName["Karfreitag"].date, "2026-04-03");
+    assert.equal(byName["Ostermontag"].date, "2026-04-06");
+    assert.equal(byName["Christi Himmelfahrt"].date, "2026-05-14");
+    assert.equal(byName["Pfingstmontag"].date, "2026-05-25");
+    assert.equal(byName["Fronleichnam"].date, "2026-06-04");
+    assert.equal(byName["Augsburger Friedensfest"].scope, "Stadt Augsburg");
+    assert.equal(byName["Buß- und Bettag"].date, "2026-11-18");
+    assert.equal(getGermanHolidays(2025).some(holiday => holiday.date === "2025-05-08" && holiday.scope.includes("Berlin")), true);
+    assert.equal(getGermanHolidays(2028).some(holiday => holiday.date === "2028-06-17" && holiday.scope.includes("Berlin")), true);
+    assert.equal(getHolidaysInRange("2026-04-01", "2026-04-07").length, 3);
+});
+
+test("normalisiert Kursstarts und berechnet Kurswochen ab Montag", () => {
+    assert.deepEqual(normalizeCourse({ id: "kurs-a", name: "Kurs A", startDate: "12.01.2026" }), { id: "kurs-a", name: "Kurs A", startDate: "2026-01-12" });
+    assert.equal(normalizeDateValue("31.02.2026"), "");
+    assert.equal(calculateCourseWeek("2026-01-14", "2026-01-12"), 1);
+    assert.equal(calculateCourseWeek("2026-01-14", "2026-01-19"), 2);
+    assert.equal(formatExpectedReportNumber("2026-01-14", "2026-04-13"), "014");
+});
+
+test("erkennt Berichtszeiträume anhand typischer Datumsfelder", () => {
+    const inputs = [
+        { id: "date_from", name: "date_from", value: "13.04.2026", getAttribute: () => "Von" },
+        { id: "date_to", name: "date_to", value: "17.04.2026", getAttribute: () => "Bis" }
+    ];
+    const root = { querySelectorAll: () => inputs, querySelector: () => null };
+    assert.deepEqual(extractReportPeriod(root), { periodStart: "2026-04-13", periodEnd: "2026-04-17" });
 });
 
 test("ordnet Felder anhand direkter Wochentagsmerkmale vor Containertext zu", () => {
@@ -229,6 +277,44 @@ test("überträgt leere Wochenenden nicht, behält echte Wochenendeinträge aber
     assert.equal(validateReport(reportWithSaturday).some(issue => issue.type === "weekend_entry"), true);
 });
 
+test("ergänzt Feiertage im erkannten Berichtszeitraum ohne externe API", () => {
+    const makeField = (id, name, value, ariaLabel = "") => ({
+        id, name, value,
+        getAttribute: attribute => attribute === "aria-label" ? ariaLabel : "",
+        closest: () => ({ textContent: id })
+    });
+    const dateFrom = makeField("date_from", "date_from", "30.03.2026", "Von");
+    const dateTo = makeField("date_to", "date_to", "03.04.2026", "Bis");
+    const dayIds = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag"];
+    const hours = dayIds.map(day => makeField(`${day}_hours`, `${day}_hours`, day === "freitag" ? "0" : "8", "Stunden / UE"));
+    const entries = dayIds.map(day => makeField(`${day}_text_1`, `${day}_text_1`, day === "freitag" ? "" : `Konkrete Tätigkeit für ${day} dokumentiert`));
+    const root = {
+        querySelector: selector => selector.includes("Berichtsnummer") ? makeField("number", "number", "001", "Berichtsnummer") : selector === "#total_hours" ? makeField("total_hours", "total_hours", "32") : null,
+        querySelectorAll: selector => selector === "input" ? [dateFrom, dateTo, ...hours, ...entries] : selector.includes("Stunden / UE") ? hours : entries
+    };
+    const report = extractReportData(root);
+    assert.equal(report.periodStart, "2026-03-30");
+    assert.equal(report.periodEnd, "2026-04-03");
+    assert.equal(report.holidays.some(holiday => holiday.name === "Karfreitag"), true);
+    assert.equal(report.days.find(day => day.weekday === "Freitag").holiday.name, "Karfreitag");
+    assert.match(report.holidayPolicy, /schulungsfrei/);
+    assert.deepEqual(validateReport(report).filter(issue => issue.day === "Freitag"), []);
+});
+
+test("behandelt einen benannten gesetzlichen Feiertag mit 0 UE als neutral", () => {
+    const issues = validateReport({
+        reportNumber: "001",
+        totalHours: 0,
+        days: [{
+            weekday: "Freitag",
+            hours: 0,
+            entries: ["Karfreitag"],
+            holiday: { name: "Karfreitag", scope: "bundesweit" }
+        }]
+    });
+    assert.deepEqual(issues, []);
+});
+
 test("findet lokale Auffälligkeiten unabhängig von einer KI", () => {
     const issues = validateReport({
         reportNumber: "9",
@@ -264,6 +350,20 @@ test("behandelt FPA, Prüfung, Test, Wiederholung und Vorbereitung als neutrale 
     assert.equal(reportNumberMessage("7"), "Bitte die Berichtsnummer dreistellig als 007 eintragen.");
 });
 
+test("gleicht Berichtsnummern mit dem aktiven Kursstart ab", () => {
+    const baseReport = {
+        totalHours: 8,
+        periodStart: "2026-01-19",
+        days: [{ weekday: "Montag", hours: 8, entries: ["Konkrete Tätigkeit nachvollziehbar dokumentiert"] }]
+    };
+    const course = { id: "kurs-a", name: "Kurs A", startDate: "2026-01-12" };
+    assert.equal(validateReport({ ...baseReport, reportNumber: "002" }, undefined, course).some(issue => issue.type === "unexpected_report_number"), false);
+    const mismatched = validateReport({ ...baseReport, reportNumber: "004" }, undefined, course);
+    assert.equal(mismatched.some(issue => issue.type === "unexpected_report_number" && issue.message.includes("002")), true);
+    const onlyFormatting = validateReport({ ...baseReport, reportNumber: "2" }, undefined, course);
+    assert.deepEqual(onlyFormatting.map(issue => issue.type), ["invalid_report_number"]);
+});
+
 test("findet Abwesenheiten mit positiven Stunden und inkonsistente Summen", () => {
     const issues = validateReport({
         reportNumber: "001",
@@ -278,11 +378,12 @@ test("erkennt ein vollständig leeres Berichtsheft", () => {
     assert.equal(validateReport({ days: [] }).some(issue => issue.type === "empty_report"), true);
 });
 
-test("baut eine minimierte Chat-Completions-Anfrage", () => {
-    const profile = { model: "lokales-modell", manualModel: "", temperature: 0.2 };
+test("baut eine minimierte und ausgabebegrenzte Chat-Completions-Anfrage", () => {
+    const profile = { model: "lokales-modell", manualModel: "", temperature: 0.2, maxTokens: 500 };
     const report = { reportNumber: "034", totalHours: 8, days: [{ weekday: "Montag", hours: 8, entries: ["Testumgebung konfiguriert"] }] };
     const request = buildAiRequest(report, profile, { systemPrompt: DEFAULT_SYSTEM_PROMPT });
     assert.equal(request.model, "lokales-modell");
+    assert.equal(request.max_tokens, 500);
     assert.equal(request.messages.length, 2);
     assert.equal(request.messages[1].content.includes("Max Mustermann"), false);
     assert.equal(request.messages[1].content.includes("Testumgebung konfiguriert"), true);
@@ -381,7 +482,7 @@ test("verarbeitet eine vollständige Chat-Completions-Antwort", async () => {
         status: 200,
         responseText: JSON.stringify({ choices: [{ message: { content: '```json\n{"status":"warning","summary":"Hinweis","formalIssues":[],"contentIssues":[{"day":"Montag","message":"Bitte genauer beschreiben."}],"hourIssues":[],"notes":[],"suggestedComment":"Bitte genauer beschreiben."}\n```' } }] })
     });
-    const profile = { ...defaultAiSettings().profiles[0], model: "synthetic-model" };
+    const profile = { ...defaultAiSettings().profiles[0], model: "synthetic-model", authType: "none" };
     const result = await callAi({ days: [{ weekday: "Montag", hours: 8, entries: ["Server"] }] }, profile, { debug: false, systemPrompt: DEFAULT_SYSTEM_PROMPT });
     assert.equal(result.status, "warning");
     assert.equal(result.suggestedComment, "Bitte genauer beschreiben.");

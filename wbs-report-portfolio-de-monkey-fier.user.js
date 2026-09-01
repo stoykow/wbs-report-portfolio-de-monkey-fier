@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.0.3
+// @version       2.1.0
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -18,27 +18,17 @@
     "use strict";
 
     ////////////////////////////// START config
-    // Autofill templates that can be toggled on and off for comments:
-    const commentTemplates = [
-        "Montag:", "Dienstag:", "Mittwoch:", "Donnerstag:", "Freitag:",
-        "Bitte 3-stellige Wochennr. (00X) setzen.", "Bitte Abschnitt benennen.",
-        "Bitte min. 3 Einträge pro Tag.", "FPAs bitte etwas ausführen.",
-        "Bitte ganze Tage oder 0 St/UE eintragen.",
-        "Für entschuldigte Tage bitte 0 St/UE eintragen.",
-        "Bitte keine Einträge am Wochenende.", "Danke :)"
-    ];
-
     // Strings to look for in the portfolio (partial, case-insensitive):
     const commentPOIs = [
         "krank", "entschuldig", "abwesen", "anwesen", "arzt", "fehl",
-        "attest", "urlaub", "ferien", "feiertag", "kontrolle"
+        "attest", "urlaub", "ferien", "kontrolle"
     ];
     ////////////////////////////// END config
 
     const SCRIPT_NAME = "WBS Berichtsheft de-monkey-fier";
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
-    const AI_SETTINGS_SCHEMA_VERSION = 3;
+    const AI_SETTINGS_SCHEMA_VERSION = 4;
     const DAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
     const DAY_ALIASES = [
         ["montag", "monday", "mo"], ["dienstag", "tuesday", "di"],
@@ -70,14 +60,21 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         id: "lmstudio-main",
         name: "LM Studio",
         provider: "lm-studio",
-        baseUrl: "http://192.168.113.1:1234",
+        baseUrl: "https://llm.nik0.de",
         chatEndpoint: "/v1/chat/completions",
         modelsEndpoint: "/v1/models",
         model: "",
         manualModel: "",
+
         temperature: 0.2,
-        timeout: 300000,
-        authType: "none",
+        maxTokens: 500,
+
+        reasoningMode: "auto",
+        reasoningEffort: "medium",
+
+        timeout: 900000,
+
+        authType: "bearer",
         token: ""
     });
 
@@ -92,7 +89,18 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             debug: false,
             activeProfileId: DEFAULT_PROFILE.id,
             profiles: [cloneDefaultProfile()],
+            activeCourseId: "",
+            courses: [],
             systemPrompt: DEFAULT_SYSTEM_PROMPT
+        };
+    }
+
+    function normalizeCourse(course, fallbackIndex = 0) {
+        const source = course && typeof course === "object" ? course : {};
+        return {
+            id: String(source.id || `course-${fallbackIndex + 1}`),
+            name: String(source.name || `Kurs ${fallbackIndex + 1}`),
+            startDate: normalizeDateValue(source.startDate)
         };
     }
 
@@ -115,7 +123,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             model: String(source.model || ""),
             manualModel: String(source.manualModel || ""),
             temperature: numberInRange(source.temperature, DEFAULT_PROFILE.temperature, 0, 2),
-            timeout: numberInRange(source.timeout, DEFAULT_PROFILE.timeout, 1000, 300000),
+            maxTokens: numberInRange(source.maxTokens, DEFAULT_PROFILE.maxTokens, 1, 32768),
+            timeout: numberInRange(source.timeout, DEFAULT_PROFILE.timeout, 1000, 900000),
             authType: ["none", "bearer", "api-key"].includes(source.authType) ? source.authType : "none",
             token: typeof source.token === "string" ? source.token : ""
         };
@@ -125,10 +134,12 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const defaults = defaultAiSettings();
         const source = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
         const sourceSchemaVersion = Number(source.schemaVersion || 1);
-        const shouldMigrateDefaultTimeout = sourceSchemaVersion < 2;
+        const shouldMigrateOneMinuteTimeout = sourceSchemaVersion < 2;
+        const shouldMigrateFiveMinuteTimeout = sourceSchemaVersion < 4;
         const profiles = Array.isArray(source.profiles) && source.profiles.length
             ? source.profiles.map((profile, index) => normalizeProfile(
-                shouldMigrateDefaultTimeout && Number(profile && profile.timeout) === 60000
+                (shouldMigrateOneMinuteTimeout && Number(profile && profile.timeout) === 60000) ||
+                    (shouldMigrateFiveMinuteTimeout && Number(profile && profile.timeout) === 300000)
                     ? { ...profile, timeout: DEFAULT_PROFILE.timeout }
                     : profile,
                 index
@@ -141,12 +152,18 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const activeProfileId = profiles.some(profile => profile.id === source.activeProfileId)
             ? source.activeProfileId
             : profiles[0].id;
+        const courses = Array.isArray(source.courses) ? source.courses.map(normalizeCourse) : [];
+        const activeCourseId = courses.some(course => course.id === source.activeCourseId)
+            ? source.activeCourseId
+            : courses[0] && courses[0].id || "";
         return {
             schemaVersion: AI_SETTINGS_SCHEMA_VERSION,
             enabled: source.enabled !== false,
             debug: source.debug === true,
             activeProfileId,
             profiles,
+            activeCourseId,
+            courses,
             systemPrompt: typeof source.systemPrompt === "string" && source.systemPrompt.trim() && source.systemPrompt !== LEGACY_DEFAULT_SYSTEM_PROMPT
                 ? source.systemPrompt
                 : DEFAULT_SYSTEM_PROMPT
@@ -203,6 +220,10 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return settings.profiles.find(profile => profile.id === settings.activeProfileId) || settings.profiles[0];
     }
 
+    function getActiveCourse(settings = loadAiConfig()) {
+        return settings.courses.find(course => course.id === settings.activeCourseId) || null;
+    }
+
     function selectedModel(profile) {
         return String(profile.manualModel || profile.model || "").trim();
     }
@@ -246,7 +267,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
                 ...options,
                 onload: response => resolve(response),
                 onerror: () => reject(new Error("Der KI-Server ist nicht erreichbar.")),
-                ontimeout: () => reject(new Error("Zeitüberschreitung beim KI-Server.")),
+                ontimeout: () => reject(new Error(`Der Browser hat die KI-Anfrage nach ${Math.round(Number(options.timeout || 0) / 60000)} Minuten abgebrochen. Bitte den Timeout erhöhen oder die Modell-/Serverleistung prüfen.`)),
                 onabort: () => reject(new Error("Die Anfrage an den KI-Server wurde abgebrochen."))
             });
         });
@@ -255,7 +276,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     function classifyHttpError(status) {
         if (status === 401 || status === 403) return new Error("Authentifizierung fehlgeschlagen.");
         if (status === 404 || status === 405) return new Error("API-Endpunkt nicht unterstützt.");
-        if (status === 408 || status === 504) return new Error("Zeitüberschreitung beim KI-Server.");
+        if (status === 408 || status === 504) return new Error(`Der KI-Server oder ein vorgeschalteter Proxy hat die Anfrage mit HTTP ${status} wegen eines serverseitigen Zeitlimits abgebrochen. Ein höherer Browser-Timeout allein behebt das nicht.`);
         if (status >= 400) return new Error(`KI-Server antwortet mit HTTP ${status}.`);
         return null;
     }
@@ -342,6 +363,146 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return Number.isFinite(parsed) ? parsed : null;
     }
 
+    function parseDateValue(value) {
+        const text = String(value || "").trim();
+        let year; let month; let day;
+        let match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+        if (match) [, year, month, day] = match;
+        else {
+            match = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(text);
+            if (!match) return null;
+            [, day, month, year] = match;
+        }
+        const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+        if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) return null;
+        return date;
+    }
+
+    function toIsoDate(date) {
+        return date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+    }
+
+    function formatGermanDate(value) {
+        const date = parseDateValue(value);
+        return date ? `${String(date.getUTCDate()).padStart(2, "0")}.${String(date.getUTCMonth() + 1).padStart(2, "0")}.${date.getUTCFullYear()}` : String(value || "");
+    }
+
+    function normalizeDateValue(value) {
+        return toIsoDate(parseDateValue(value));
+    }
+
+    function addUtcDays(date, days) {
+        const result = new Date(date.getTime());
+        result.setUTCDate(result.getUTCDate() + days);
+        return result;
+    }
+
+    function startOfIsoWeek(value) {
+        const date = value instanceof Date ? new Date(value.getTime()) : parseDateValue(value);
+        if (!date) return null;
+        const weekday = date.getUTCDay() || 7;
+        return addUtcDays(date, 1 - weekday);
+    }
+
+    function calculateCourseWeek(courseStart, reportStart) {
+        const courseWeek = startOfIsoWeek(courseStart);
+        const reportWeek = startOfIsoWeek(reportStart);
+        if (!courseWeek || !reportWeek || reportWeek < courseWeek) return null;
+        return Math.floor((reportWeek - courseWeek) / 604800000) + 1;
+    }
+
+    function formatExpectedReportNumber(courseStart, reportStart) {
+        const week = calculateCourseWeek(courseStart, reportStart);
+        return week === null ? "" : String(week).padStart(3, "0");
+    }
+
+    function easterSunday(year) {
+        const a = year % 19;
+        const b = Math.floor(year / 100);
+        const c = year % 100;
+        const d = Math.floor(b / 4);
+        const e = b % 4;
+        const f = Math.floor((b + 8) / 25);
+        const g = Math.floor((b - f + 1) / 3);
+        const h = (19 * a + b - d - g + 15) % 30;
+        const i = Math.floor(c / 4);
+        const k = c % 4;
+        const l = (32 + 2 * e + 2 * i - h - k) % 7;
+        const m = Math.floor((a + 11 * h + 22 * l) / 451);
+        const month = Math.floor((h + l - 7 * m + 114) / 31);
+        const day = (h + l - 7 * m + 114) % 31 + 1;
+        return new Date(Date.UTC(year, month - 1, day));
+    }
+
+    function repentanceDay(year) {
+        const date = new Date(Date.UTC(year, 10, 22));
+        while (date.getUTCDay() !== 3) date.setUTCDate(date.getUTCDate() - 1);
+        return date;
+    }
+
+    function getGermanHolidays(year) {
+        const numericYear = Number(year);
+        if (!Number.isInteger(numericYear) || numericYear < 2000 || numericYear > 2100) return [];
+        const easter = easterSunday(numericYear);
+        const holidays = [];
+        const addFixed = (month, day, name, scope) => holidays.push({ date: toIsoDate(new Date(Date.UTC(numericYear, month - 1, day))), name, scope });
+        const addMovable = (offset, name, scope) => holidays.push({ date: toIsoDate(addUtcDays(easter, offset)), name, scope });
+
+        addFixed(1, 1, "Neujahr", "bundesweit");
+        addFixed(1, 6, "Heilige Drei Könige", "Baden-Württemberg, Bayern, Sachsen-Anhalt");
+        if (numericYear >= 2023) addFixed(3, 8, "Internationaler Frauentag", "Berlin, Mecklenburg-Vorpommern");
+        else if (numericYear >= 2019) addFixed(3, 8, "Internationaler Frauentag", "Berlin");
+        addMovable(-2, "Karfreitag", "bundesweit");
+        addMovable(0, "Ostersonntag", "Brandenburg");
+        addMovable(1, "Ostermontag", "bundesweit");
+        addFixed(5, 1, "Tag der Arbeit", "bundesweit");
+        addMovable(39, "Christi Himmelfahrt", "bundesweit");
+        addMovable(49, "Pfingstsonntag", "Brandenburg");
+        addMovable(50, "Pfingstmontag", "bundesweit");
+        addMovable(60, "Fronleichnam", "BW, BY, HE, NW, RP, SL sowie örtlich in SN und TH");
+        addFixed(8, 8, "Augsburger Friedensfest", "Stadt Augsburg");
+        addFixed(8, 15, "Mariä Himmelfahrt", "Saarland sowie örtlich in Bayern");
+        if (numericYear >= 2019) addFixed(9, 20, "Weltkindertag", "Thüringen");
+        addFixed(10, 3, "Tag der Deutschen Einheit", "bundesweit");
+        addFixed(10, 31, "Reformationstag", numericYear >= 2018 ? "BB, HB, HH, MV, NI, SN, ST, SH, TH" : "BB, MV, SN, ST, TH");
+        addFixed(11, 1, "Allerheiligen", "BW, BY, NW, RP, SL");
+        holidays.push({ date: toIsoDate(repentanceDay(numericYear)), name: "Buß- und Bettag", scope: "Sachsen" });
+        addFixed(12, 25, "1. Weihnachtsfeiertag", "bundesweit");
+        addFixed(12, 26, "2. Weihnachtsfeiertag", "bundesweit");
+        if (numericYear === 2020) addFixed(5, 8, "75. Jahrestag der Befreiung vom Nationalsozialismus", "Berlin, einmalig 2020");
+        if (numericYear === 2025) addFixed(5, 8, "80. Jahrestag der Befreiung vom Nationalsozialismus", "Berlin, einmalig 2025");
+        if (numericYear === 2028) addFixed(6, 17, "75. Jahrestag des Volksaufstands vom 17. Juni 1953", "Berlin, einmalig 2028");
+        return holidays.sort((left, right) => left.date.localeCompare(right.date));
+    }
+
+    function getHolidaysInRange(startValue, endValue) {
+        const start = parseDateValue(startValue);
+        const end = parseDateValue(endValue || startValue);
+        if (!start || !end || end < start) return [];
+        const holidays = [];
+        for (let year = start.getUTCFullYear(); year <= end.getUTCFullYear(); year++) holidays.push(...getGermanHolidays(year));
+        const startKey = toIsoDate(start);
+        const endKey = toIsoDate(end);
+        return holidays.filter(holiday => holiday.date >= startKey && holiday.date <= endKey);
+    }
+
+    function extractReportPeriod(root) {
+        const candidates = [...root.querySelectorAll("input")].map((input, index) => {
+            const label = input.id ? root.querySelector(`label[for="${cssEscape(input.id)}"]`) : null;
+            const descriptor = [input.id, input.name, input.getAttribute && input.getAttribute("aria-label"), label && label.textContent]
+                .filter(Boolean).join(" ").toLocaleLowerCase("de-DE");
+            const looksLikeDateField = input.type === "date" || /(date|datum|zeitraum|von|bis|start|beginn|ende|from|to)/i.test(descriptor);
+            const date = looksLikeDateField ? normalizeDateValue(input.value) : "";
+            if (!date) return null;
+            return { date, descriptor, index };
+        }).filter(Boolean);
+        const startPattern = /(^|[^a-z])(von|start|beginn|from|date[_ -]?from|period[_ -]?start)([^a-z]|$)/i;
+        const endPattern = /(^|[^a-z])(bis|ende|end|to|date[_ -]?to|period[_ -]?end)([^a-z]|$)/i;
+        const startCandidate = candidates.find(candidate => startPattern.test(candidate.descriptor)) || candidates[0];
+        const endCandidate = candidates.find(candidate => endPattern.test(candidate.descriptor)) || candidates.find(candidate => candidate !== startCandidate);
+        return { periodStart: startCandidate && startCandidate.date || "", periodEnd: endCandidate && endCandidate.date || "" };
+    }
+
     function extractReportData(root = document) {
         const weekNumberInput = root.querySelector('input[aria-label="Berichtsnummer"], #number');
         const totalHoursInput = root.querySelector("#total_hours");
@@ -381,6 +542,26 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             const isWeekdayWithHoursField = index < 5 && day.hours !== null;
             return hasEntries || hasPositiveWeekendHours || isWeekdayWithHoursField;
         });
+        const period = extractReportPeriod(root);
+        if (period.periodStart) {
+            result.periodStart = period.periodStart;
+            const weekStart = startOfIsoWeek(period.periodStart);
+            result.days.forEach(day => {
+                const dayIndex = DAY_NAMES.indexOf(day.weekday);
+                if (weekStart && dayIndex >= 0) day.date = toIsoDate(addUtcDays(weekStart, dayIndex));
+            });
+            const effectiveEnd = period.periodEnd || toIsoDate(addUtcDays(parseDateValue(period.periodStart), 6));
+            if (period.periodEnd) result.periodEnd = period.periodEnd;
+            const holidays = getHolidaysInRange(period.periodStart, effectiveEnd);
+            if (holidays.length) {
+                result.holidays = holidays;
+                result.holidayPolicy = "Alle aufgeführten gesetzlichen Feiertage gelten für diese Prüfung unabhängig von ihrem regionalen Geltungsbereich als schulungsfrei.";
+                result.days.forEach(day => {
+                    const holiday = holidays.find(item => item.date === day.date);
+                    if (holiday) day.holiday = { name: holiday.name, scope: holiday.scope };
+                });
+            }
+        }
         return result;
     }
 
@@ -394,7 +575,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return "Bitte die Berichtsnummer dreistellig eintragen.";
     }
 
-    function validateReport(report, poiWords = commentPOIs) {
+    function validateReport(report, poiWords = commentPOIs, course = null) {
         const source = report && typeof report === "object" ? report : {};
         const issues = [];
         const entryOccurrences = new Map();
@@ -405,15 +586,20 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             const entries = Array.isArray(day.entries) ? day.entries.filter(text => String(text).trim()) : [];
             const hours = typeof day.hours === "number" ? day.hours : null;
             const weekday = day.weekday || DAY_NAMES[dayIndex] || `Tag ${dayIndex + 1}`;
+            const holidayName = normalizedEntry(day.holiday && day.holiday.name);
+            const isKnownHolidayEntry = Boolean(holidayName) && entries.length > 0 && entries.every(entry => {
+                const normalized = normalizedEntry(entry);
+                return normalized.includes("feiertag") || normalized.includes(holidayName);
+            });
             if (hours > 0 && entries.length === 0) addIssue(weekday, "hours_without_entries", "Stunden sind eingetragen, aber Tätigkeitsbeschreibungen fehlen.");
-            if (hours === 0 && entries.length > 0) addIssue(weekday, "entries_without_hours", "Tätigkeiten sind vorhanden, obwohl 0 Stunden eingetragen sind.");
+            if (hours === 0 && entries.length > 0 && !isKnownHolidayEntry) addIssue(weekday, "entries_without_hours", "Tätigkeiten sind vorhanden, obwohl 0 Stunden eingetragen sind.");
             if (hours !== null && (hours < 0 || hours > 12 || (hours !== 0 && hours !== 8 && hours !== 10))) addIssue(weekday, "unusual_hours", `Der Stundenwert ${hours} ist ungewöhnlich.`, String(hours));
             const isWeekend = ["samstag", "sonntag"].some(dayName => weekday.toLocaleLowerCase("de-DE").includes(dayName)) || dayIndex >= 5;
             if (isWeekend && (hours > 0 || entries.length > 0)) addIssue(weekday, "weekend_entry", "Am Wochenende sind Tätigkeiten oder Stunden eingetragen.");
 
             entries.forEach(entry => {
                 const normalized = normalizedEntry(entry);
-                if (normalized.length < 15) addIssue(weekday, "too_short", "Die Tätigkeitsbeschreibung ist sehr kurz und möglicherweise zu allgemein.", entry);
+                if (normalized.length < 15 && !isKnownHolidayEntry) addIssue(weekday, "too_short", "Die Tätigkeitsbeschreibung ist sehr kurz und möglicherweise zu allgemein.", entry);
                 if (!entryOccurrences.has(normalized)) entryOccurrences.set(normalized, []);
                 entryOccurrences.get(normalized).push({ weekday, entry });
                 const matchedPois = poiWords.filter(word => normalized.includes(normalizedEntry(word)));
@@ -432,6 +618,12 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const summedHours = days.reduce((sum, day) => sum + (typeof day.hours === "number" ? day.hours : 0), 0);
         if (typeof source.totalHours === "number" && Math.abs(summedHours - source.totalHours) > 0.001) addIssue("Gesamt", "inconsistent_total", `Die Summe der Tagesstunden (${summedHours}) stimmt nicht mit den Gesamtstunden (${source.totalHours}) überein.`);
         if (source.reportNumber && !/^\d{3}$/.test(String(source.reportNumber))) addIssue("Berichtsnummer", "invalid_report_number", reportNumberMessage(source.reportNumber), String(source.reportNumber));
+        const expectedReportNumber = course && course.startDate && source.periodStart
+            ? formatExpectedReportNumber(course.startDate, source.periodStart)
+            : "";
+        if (expectedReportNumber && /^\d+$/.test(String(source.reportNumber || "")) && Number(source.reportNumber) !== Number(expectedReportNumber)) {
+            addIssue("Berichtsnummer", "unexpected_report_number", `Für die Berichtswoche wird anhand des Kursstarts die Berichtsnummer ${expectedReportNumber} erwartet. Bitte die Nummerierung prüfen.`, String(source.reportNumber));
+        }
         if (!days.length || !days.some(day => (day.entries && day.entries.length) || (typeof day.hours === "number" && day.hours !== 0))) addIssue("Bericht", "empty_report", "Das Berichtsheft enthält keine auswertbaren Tätigkeiten oder Stunden.");
         return issues;
     }
@@ -447,6 +639,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return {
             model,
             temperature: profile.temperature,
+            max_tokens: profile.maxTokens,
             messages: [
                 { role: "system", content: buildAiSystemPrompt(settings) },
                 { role: "user", content: `Prüfe dieses minimierte Berichtsheft. Nutze ausschließlich die folgenden Daten und antworte nur als JSON:\n${JSON.stringify(reportData)}` }
@@ -635,11 +828,14 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         let settings = loadAiConfig();
         let workingProfiles = settings.profiles.map(profile => ({ ...profile }));
         let activeId = settings.activeProfileId;
+        let workingCourses = settings.courses.map(course => ({ ...course }));
+        let activeCourseId = settings.activeCourseId;
         const backdrop = createElement("div", { className: "wbs-dmf-modal-backdrop" });
         backdrop.id = "wbs-dmf-settings-backdrop";
         const modal = createElement("section", { className: "wbs-dmf-modal" });
         modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true"); modal.setAttribute("aria-labelledby", "wbs-dmf-settings-title");
         const title = createElement("h2", { text: "🤖 KI-Einstellungen" }); title.id = "wbs-dmf-settings-title"; modal.appendChild(title);
+        modal.appendChild(createElement("h3", { text: "KI-Verbindung" }));
         const grid = createElement("div", { className: "wbs-dmf-grid" });
         const enabled = makeInput("wbs-ai-enabled", "", "checkbox"); enabled.checked = settings.enabled;
         const debug = makeInput("wbs-ai-debug", "", "checkbox"); debug.checked = settings.debug;
@@ -653,7 +849,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const modelSelect = createElement("select"); modelSelect.id = "wbs-ai-model";
         const manualModel = makeInput("wbs-ai-manual-model", ""); manualModel.placeholder = "Optional, überschreibt das Dropdown";
         const temperature = makeInput("wbs-ai-temperature", "", "number"); temperature.min = "0"; temperature.max = "2"; temperature.step = "0.1";
-        const timeout = makeInput("wbs-ai-timeout", "", "number"); timeout.min = "1000"; timeout.max = "300000"; timeout.step = "1000";
+        const maxTokens = makeInput("wbs-ai-max-tokens", "", "number"); maxTokens.min = "1"; maxTokens.max = "32768"; maxTokens.step = "1";
+        const timeout = makeInput("wbs-ai-timeout", "", "number"); timeout.min = "1000"; timeout.max = "900000"; timeout.step = "1000";
         const authEnabled = makeInput("wbs-ai-auth-enabled", "", "checkbox");
         const authType = createElement("select"); authType.id = "wbs-ai-auth";
         [["none", "Keine"], ["bearer", "Bearer Token"], ["api-key", "API Key (X-API-Key)"]].forEach(([value, text]) => authType.appendChild(new Option(text, value)));
@@ -663,10 +860,28 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             ["KI-Unterstützung aktivieren", enabled], ["Debug-Modus", debug], ["KI-Profil", profileSelect],
             ["Profilname", name], ["Anbieter", provider], ["KI-Server", baseUrl], ["Chat Endpoint", chatEndpoint],
             ["Models Endpoint", modelsEndpoint], ["Modell", modelSelect], ["Modellname manuell eingeben", manualModel],
-            ["Temperature", temperature], ["Timeout (ms)", timeout], ["Authentifizierung verwenden", authEnabled], ["Authentifizierungstyp", authType],
+            ["Temperature", temperature], ["Max. Ausgabetokens", maxTokens], ["Timeout (ms)", timeout], ["Authentifizierung verwenden", authEnabled], ["Authentifizierungstyp", authType],
             ["API Token / API Key", token], ["Systemprompt", prompt]
         ].forEach(([labelText, input]) => grid.append(labelFor(labelText, input), input));
         modal.appendChild(grid);
+        modal.appendChild(createElement("h3", { text: "Kurse und Berichtswoche" }));
+        const courseGrid = createElement("div", { className: "wbs-dmf-grid" });
+        const courseSelect = createElement("select"); courseSelect.id = "wbs-course-select";
+        const courseName = makeInput("wbs-course-name", "");
+        const courseStart = makeInput("wbs-course-start", "", "date");
+        [["Aktiver Kurs", courseSelect], ["Kursname", courseName], ["Kursstart", courseStart]]
+            .forEach(([labelText, input]) => courseGrid.append(labelFor(labelText, input), input));
+        modal.appendChild(courseGrid);
+        const courseActions = createElement("div", { className: "wbs-dmf-actions" });
+        const newCourseButton = createElement("button", { className: "wbs-dmf-button", type: "button", text: "Kurs erstellen" });
+        const deleteCourseButton = createElement("button", { className: "wbs-dmf-button wbs-dmf-button-danger", type: "button", text: "Kurs löschen" });
+        courseActions.append(newCourseButton, deleteCourseButton); modal.appendChild(courseActions);
+        modal.appendChild(createElement("h3", { text: "Gesetzliche Feiertage in Deutschland" }));
+        modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Alle angezeigten bundesweiten, landesweiten und örtlichen Feiertage werden unabhängig von ihrem Geltungsbereich als schulungsfrei behandelt." }));
+        const holidayYear = makeInput("wbs-holiday-year", String(new Date().getFullYear()), "number"); holidayYear.min = "2000"; holidayYear.max = "2100";
+        const holidayYearRow = createElement("div", { className: "wbs-dmf-grid" });
+        holidayYearRow.append(labelFor("Jahr", holidayYear), holidayYear); modal.appendChild(holidayYearRow);
+        const holidayList = createElement("ul", { className: "wbs-dmf-note-list" }); modal.appendChild(holidayList);
         modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Tokens werden getrennt im lokalen Userscript-Speicher abgelegt. Dieser Speicher ist kein vollwertiger Passwort-Tresor. Berichtsheftinhalte werden nicht gespeichert." }));
         modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: settings.systemPrompt === DEFAULT_SYSTEM_PROMPT
             ? "Aktiv ist der eingebaute Standardprompt."
@@ -685,6 +900,29 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         modal.appendChild(actions); backdrop.appendChild(modal); document.body.appendChild(backdrop);
 
         const findProfile = () => workingProfiles.find(item => item.id === activeId) || workingProfiles[0];
+        const findCourse = () => workingCourses.find(item => item.id === activeCourseId) || null;
+        const persistVisibleCourse = () => {
+            const current = findCourse();
+            if (!current) return;
+            Object.assign(current, normalizeCourse({ ...current, name: courseName.value.trim() || current.name, startDate: courseStart.value }));
+        };
+        const renderCourseOptions = () => {
+            courseSelect.replaceChildren(new Option("— Kein Kurs ausgewählt —", ""));
+            workingCourses.forEach(course => courseSelect.appendChild(new Option(course.name, course.id)));
+            courseSelect.value = activeCourseId;
+        };
+        const showCourse = () => {
+            const current = findCourse();
+            courseName.value = current ? current.name : "";
+            courseStart.value = current ? current.startDate : "";
+            courseName.disabled = !current; courseStart.disabled = !current; deleteCourseButton.disabled = !current;
+        };
+        const renderHolidayYear = () => {
+            holidayList.replaceChildren();
+            const holidays = getGermanHolidays(Number(holidayYear.value));
+            holidays.forEach(holiday => holidayList.appendChild(createElement("li", { text: `${formatGermanDate(holiday.date)} – ${holiday.name} (${holiday.scope})` })));
+            if (!holidays.length) holidayList.appendChild(createElement("li", { text: "Bitte ein Jahr zwischen 2000 und 2100 eingeben." }));
+        };
         const updateWarning = () => { externalWarning.textContent = isPrivateOrLocalHost(baseUrl.value) ? `KI-Verarbeitung über: ${displayHost(baseUrl.value)}` : "Achtung: Die konfigurierte KI befindet sich möglicherweise außerhalb des lokalen Netzwerks."; };
         const replaceModelOptions = (models, chosen = "") => {
             modelSelect.replaceChildren(new Option("— Modell auswählen —", ""));
@@ -696,7 +934,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             if (!current) return;
             Object.assign(current, normalizeProfile({ ...current, name: name.value.trim() || current.name, provider: provider.value,
                 baseUrl: baseUrl.value, chatEndpoint: chatEndpoint.value, modelsEndpoint: modelsEndpoint.value,
-                model: modelSelect.value, manualModel: manualModel.value, temperature: temperature.value,
+                model: modelSelect.value, manualModel: manualModel.value, temperature: temperature.value, maxTokens: maxTokens.value,
                 timeout: timeout.value, authType: authEnabled.checked ? (authType.value === "none" ? "bearer" : authType.value) : "none", token: token.value }));
         };
         const renderProfileOptions = () => {
@@ -707,7 +945,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             name.value = current.name; provider.value = current.provider; baseUrl.value = current.baseUrl;
             chatEndpoint.value = current.chatEndpoint; modelsEndpoint.value = current.modelsEndpoint;
             replaceModelOptions([], current.model); manualModel.value = current.manualModel;
-            temperature.value = String(current.temperature); timeout.value = String(current.timeout);
+            temperature.value = String(current.temperature); maxTokens.value = String(current.maxTokens); timeout.value = String(current.timeout);
             authEnabled.checked = current.authType !== "none"; authType.value = current.authType;
             authType.disabled = !authEnabled.checked; token.value = current.token; token.disabled = !authEnabled.checked; updateWarning();
         };
@@ -721,8 +959,14 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             testButton.disabled = false; modelsButton.disabled = false;
             if (!isTest && result.ok && !result.models.length) status.textContent = "🟡 Keine Modelle gefunden; bitte Modell manuell eingeben.";
         };
-        renderProfileOptions(); showProfile();
+        renderProfileOptions(); showProfile(); renderCourseOptions(); showCourse(); renderHolidayYear();
         profileSelect.addEventListener("change", () => { persistVisibleProfile(); activeId = profileSelect.value; showProfile(); void runModelRequest(false); });
+        courseSelect.addEventListener("change", () => { persistVisibleCourse(); activeCourseId = courseSelect.value; showCourse(); });
+        courseName.addEventListener("input", () => {
+            const current = findCourse();
+            if (current) { current.name = courseName.value || "Unbenannter Kurs"; renderCourseOptions(); }
+        });
+        holidayYear.addEventListener("input", renderHolidayYear);
         baseUrl.addEventListener("input", updateWarning);
         authEnabled.addEventListener("input", () => {
             if (authEnabled.checked && authType.value === "none") authType.value = "bearer";
@@ -741,12 +985,28 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             if (!window.confirm(`Profil „${findProfile().name}“ wirklich löschen?`)) return;
             workingProfiles = workingProfiles.filter(item => item.id !== activeId); activeId = workingProfiles[0].id; renderProfileOptions(); showProfile();
         });
+        newCourseButton.addEventListener("click", () => {
+            persistVisibleCourse();
+            const id = `course-${Date.now()}`;
+            workingCourses.push(normalizeCourse({ id, name: `Kurs ${workingCourses.length + 1}`, startDate: "" }));
+            activeCourseId = id; renderCourseOptions(); showCourse(); courseName.focus();
+        });
+        deleteCourseButton.addEventListener("click", () => {
+            const current = findCourse();
+            if (!current || !window.confirm(`Kurs „${current.name}“ wirklich löschen?`)) return;
+            workingCourses = workingCourses.filter(course => course.id !== activeCourseId);
+            activeCourseId = workingCourses[0] && workingCourses[0].id || "";
+            renderCourseOptions(); showCourse();
+        });
         modelsButton.addEventListener("click", () => runModelRequest(false)); testButton.addEventListener("click", () => runModelRequest(true));
         restoreButton.addEventListener("click", () => { prompt.value = DEFAULT_SYSTEM_PROMPT; }); closeButton.addEventListener("click", () => backdrop.remove());
         backdrop.addEventListener("click", event => { if (event.target === backdrop) backdrop.remove(); });
         saveButton.addEventListener("click", () => {
             try {
-                persistVisibleProfile(); settings = saveAiConfig({ enabled: enabled.checked, debug: debug.checked, activeProfileId: activeId, profiles: workingProfiles, systemPrompt: prompt.value });
+                persistVisibleProfile(); persistVisibleCourse(); settings = saveAiConfig({
+                    enabled: enabled.checked, debug: debug.checked, activeProfileId: activeId, profiles: workingProfiles,
+                    activeCourseId, courses: workingCourses, systemPrompt: prompt.value
+                });
                 backdrop.remove(); if (typeof onSaved === "function") onSaved(settings);
             } catch (error) { status.textContent = `🔴 ${error.message}`; }
         });
@@ -867,15 +1127,19 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
 
     function renderAiPanel(commentTextArea, insertionTarget, beforeElement) {
         document.querySelector("#wbs-dmf-ai-panel")?.remove();
-        const settings = loadAiConfig(); const profile = getActiveAiProfile(settings);
+        const settings = loadAiConfig(); const profile = getActiveAiProfile(settings); const course = getActiveCourse(settings);
         const panel = createElement("section", { className: "wbs-dmf-panel" }); panel.id = "wbs-dmf-ai-panel";
         panel.appendChild(createElement("h3", { text: "🤖 KI-Assistent" }));
         panel.appendChild(createElement("div", { text: `KI-Profil: ${profile.name}` }));
         panel.appendChild(createElement("div", { text: `KI-Verarbeitung über: ${displayHost(profile.baseUrl)}` }));
         panel.appendChild(createElement("div", { text: `Modell: ${selectedModel(profile) || "noch nicht ausgewählt"}` }));
+        panel.appendChild(createElement("div", { text: course ? `Kurs: ${course.name} · Start: ${course.startDate ? formatGermanDate(course.startDate) : "noch nicht gesetzt"}` : "Kurs: kein Kursstart ausgewählt" }));
         if (!isPrivateOrLocalHost(profile.baseUrl)) panel.appendChild(createElement("p", { className: "wbs-dmf-warning", text: "Achtung: Die konfigurierte KI befindet sich möglicherweise außerhalb des lokalen Netzwerks." }));
         const connectionStatus = createElement("div", { className: "wbs-dmf-status", text: settings.enabled ? "Verbindung noch nicht getestet." : "KI-Unterstützung ist deaktiviert." }); panel.appendChild(connectionStatus);
-        const reportData = extractReportData(); const localIssues = validateReport(reportData);
+        const reportData = extractReportData();
+        const expectedNumber = course && reportData.periodStart ? formatExpectedReportNumber(course.startDate, reportData.periodStart) : "";
+        if (expectedNumber) panel.appendChild(createElement("div", { text: `Erwartete Berichtsnummer für diesen Zeitraum: ${expectedNumber}` }));
+        const localIssues = validateReport(reportData, commentPOIs, course);
         const localResults = createElement("div", { className: "wbs-dmf-result" }); renderLocalResults(localResults, localIssues); panel.appendChild(localResults);
         const aiResults = createElement("div", { className: "wbs-dmf-result" }); panel.appendChild(aiResults);
         const preview = createElement("textarea", { className: "wbs-dmf-comment-preview" }); preview.placeholder = "Hier erscheint der bearbeitbare Kommentarvorschlag."; preview.hidden = true; panel.appendChild(preview);
@@ -891,7 +1155,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         testButton.addEventListener("click", async () => { connectionStatus.textContent = "🟡 Verbindung wird geprüft …"; testButton.disabled = true; const result = await testAiConnection(profile, settings); connectionStatus.textContent = result.message; testButton.disabled = false; });
         checkButton.addEventListener("click", async () => {
             const currentReportData = extractReportData();
-            const currentLocalIssues = validateReport(currentReportData);
+            const currentLocalIssues = validateReport(currentReportData, commentPOIs, course);
             renderLocalResults(localResults, currentLocalIssues);
             if (!currentReportData.days || !currentReportData.days.length || currentLocalIssues.some(issue => issue.type === "empty_report")) {
                 connectionStatus.textContent = "🔴 Das Berichtsheft ist leer oder die WBS-Seitenstruktur wurde verändert.";
@@ -900,7 +1164,14 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             connectionStatus.textContent = "🟡 KI-Prüfung läuft …"; checkButton.disabled = true;
             lastResult = null; generateButton.disabled = true; applyButton.disabled = true; preview.value = ""; preview.hidden = true;
             try {
-                lastResult = await callAi(currentReportData, profile, settings); connectionStatus.textContent = "🟢 KI-Antwort erfolgreich verarbeitet"; renderAiResults(aiResults, lastResult);
+                const aiReportData = course && course.startDate ? {
+                    ...currentReportData,
+                    courseContext: {
+                        startDate: course.startDate,
+                        expectedReportNumber: currentReportData.periodStart ? formatExpectedReportNumber(course.startDate, currentReportData.periodStart) : ""
+                    }
+                } : currentReportData;
+                lastResult = await callAi(aiReportData, profile, settings); connectionStatus.textContent = "🟢 KI-Antwort erfolgreich verarbeitet"; renderAiResults(aiResults, lastResult);
                 const suggestion = generateSuggestedComment(lastResult);
                 if (suggestion) { preview.value = suggestion; preview.hidden = false; generateButton.disabled = false; applyButton.disabled = false; }
             } catch (error) {
@@ -949,14 +1220,6 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         }
     }
 
-    function insertCommentLink(container, beforeElement, emoji, content, handler) {
-        const group = createElement("div", { className: "form-group" }); group.appendChild(createElement("div", { className: "col-sm-3 control-label" }));
-        const tail = createElement("div", { className: "col-sm-9" }); const box = createElement("div", { className: "checkbox" });
-        const icon = createElement("span", { text: `${emoji} ` }); const link = createElement("a", { text: content }); link.href = "javascript:void(0)"; link.addEventListener("click", handler);
-        box.append(icon, link); tail.appendChild(box); group.appendChild(tail);
-        if (beforeElement && beforeElement.parentNode === container) container.insertBefore(group, beforeElement); else container.appendChild(group);
-    }
-
     function runLegacyDomValidations() {
         let hasWarnings = false; let hasPOIs = false;
         document.querySelectorAll('input[name*="_text"], textarea[name*="_text"]').forEach(input => {
@@ -986,16 +1249,6 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         document.querySelectorAll('input[name="cmd[reportstrainer.savereject]"]').forEach(button => { button.value = "👎 Zurückgeben"; });
         const commentTextArea = document.querySelector("#remarks"); const bottomButtons = document.querySelector("#form_ > div > div.ilFormFooter.clearfix");
         const commentContainer = commentTextArea && commentTextArea.parentNode && commentTextArea.parentNode.parentNode ? commentTextArea.parentNode.parentNode.parentNode : null;
-        if (commentTextArea && commentContainer) {
-            const toggleComment = text => {
-                if (commentTextArea.value.includes(text)) commentTextArea.value = commentTextArea.value.replace(text, "").replace(/ {2,}/g, " ").trim();
-                else commentTextArea.value = `${commentTextArea.value.trim()} ${text}`.trim(); commentTextArea.dispatchEvent(new Event("input", { bubbles: true }));
-            };
-            insertCommentLink(commentContainer, bottomButtons, "❌", "*Leeren*", () => { commentTextArea.value = ""; commentTextArea.dispatchEvent(new Event("input", { bubbles: true })); });
-            commentTemplates.forEach(value => insertCommentLink(commentContainer, bottomButtons, "💬", value, () => toggleComment(value)));
-            const disclaimer = createElement("p", { text: "Liebe Ausbilderinnen und Ausbilder, der WBS Berichtsheft de-monkey-fier ist nur ein Werkzeug. Bitte prüft das Berichtsheft und den Kommentar immer manuell." }); disclaimer.style.fontStyle = "italic";
-            commentContainer.insertBefore(disclaimer, bottomButtons && bottomButtons.parentNode === commentContainer ? bottomButtons : null);
-        }
         runLegacyDomValidations(); renderAiPanel(commentTextArea, commentContainer, bottomButtons);
     }
 
@@ -1009,10 +1262,11 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     }
 
     const testExports = {
-        DEFAULT_SYSTEM_PROMPT, LEGACY_DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeAiSettings,
-        loadAiConfig, saveAiConfig, getAiProfiles, saveAiProfiles, getActiveAiProfile,
+        DEFAULT_SYSTEM_PROMPT, LEGACY_DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeCourse, normalizeAiSettings,
+        loadAiConfig, saveAiConfig, getAiProfiles, saveAiProfiles, getActiveAiProfile, getActiveCourse,
         selectedModel, joinUrl, buildAuthHeaders, gmRequest, classifyHttpError,
-        parseModelsResponse, getAvailableModels, testAiConnection, detectDayIndex, parseHours,
+        parseModelsResponse, getAvailableModels, testAiConnection, detectDayIndex, parseHours, parseDateValue,
+        normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
         extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiRequest, callAi, extractJsonText,
         normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost

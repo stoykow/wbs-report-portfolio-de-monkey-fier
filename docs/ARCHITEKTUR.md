@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.0.3
+Stand: Version 2.1.0
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -9,7 +9,7 @@ Das Userscript läuft ausschließlich unter `*://ecampus.wbstraining.de/*`. Der 
 | Seite | Erkennungswert | Erweiterungen |
 | --- | --- | --- |
 | Berichtsheftübersicht | `reportstrainer.list` | Autofilter, gesperrte Annahme-/Rückgabeaktionen, Navigation zum nächsten Bericht, KI-Einstellungen |
-| Einzelnes Berichtsheft | `reportstrainer.viewreport` | Buttons, Kommentarvorlagen, Markierungen, lokale Validierung, KI-Assistent, KI-Einstellungen |
+| Einzelnes Berichtsheft | `reportstrainer.viewreport` | Buttons, Markierungen, lokale Validierung, KI-Assistent, Kurs- und KI-Einstellungen |
 
 Andere eCampus-Seiten werden nicht verändert.
 
@@ -21,10 +21,11 @@ Die ursprüngliche Funktionalität bleibt erhalten:
 - Die Annahme- und Rückgabeaktionen der Tabellenzeilen werden als Schutz vor versehentlichen Klicks deaktiviert und durchgestrichen.
 - Zwei Schaltflächen öffnen den jeweils nächsten Bericht im selben beziehungsweise in einem neuen Tab.
 - In der Einzelansicht werden die Buttons als „✅ Annehmen“ und „👎 Zurückgeben“ beschriftet.
-- Kommentarvorlagen lassen sich umschalten; „*Leeren*“ leert das Kommentarfeld.
 - Konfigurierbare Schlagwörter markieren Fundstellen mit `🔎`.
 - Berichtsnummer, Tagesstunden und Gesamtstunden werden lokal geprüft und mit `⚠️` markiert.
 - Ein zusammenfassendes Symbol erscheint bei den Formularaktionen.
+
+Die aus der Upstream-Version stammende Leiste mit festen Kommentarvorlagen wurde in Version 2.1.0 entfernt.
 
 ## Verwendete DOM-Selektoren
 
@@ -53,12 +54,19 @@ Alle neuen Zugriffe auf möglicherweise veränderte WBS-Strukturen werden auf fe
 - die Berichtsnummer,
 - die Gesamtstunden,
 - Wochentag, Tagesstunden und nicht leere Tätigkeitsbeschreibungen.
+- einen erkennbaren Berichtszeitraum sowie dafür relevante Feiertage.
 
 Namen, E-Mail-Adressen, Benutzer-IDs, Account-IDs und Kommentare werden nicht ausgelesen und daher nicht an die KI gesendet. Berichtsheftinhalte werden weder mit `GM_setValue` noch anderweitig dauerhaft gespeichert.
 
 Die Tageszuordnung verwendet zunächst Feld-ID, Feldname, `aria-label`, zugehöriges Label und den nächsten Formularcontainer. Wenn daraus kein Wochentag erkennbar ist, wird die bestehende Reihenfolge der Stunden- und Tätigkeitsfelder verwendet. Es werden höchstens sieben Tage verarbeitet und keine fehlenden Werte erfunden.
 
 Samstag und Sonntag werden bei 0 Stunden und ohne Tätigkeit nicht an die KI übertragen, weil dieser erwartete Leerzustand keine prüfungsrelevante Information ist. Sobald dort Stunden oder eine Tätigkeit vorhanden sind, bleibt der betreffende Wochenendtag in den minimierten Daten und kann lokal sowie durch die KI geprüft werden.
+
+## Kurswochen und Feiertage
+
+Mehrere Kurse werden mit ID, Name und Startdatum im Userscript-Speicher verwaltet. Der Montag der Kursstartwoche bildet Berichtswoche `001`. `calculateCourseWeek()` vergleicht ihn mit dem Montag des erkannten Berichtszeitraums; Berichte vor dem Kursstart oder Berichte ohne erkennbaren Zeitraum erhalten keine berechnete Nummer.
+
+`getGermanHolidays()` berechnet die Vereinigungsmenge der bundesweiten, landesweiten, örtlichen und bekannten einmaligen gesetzlichen Feiertage vollständig lokal. Bewegliche Feiertage werden vom Osterdatum abgeleitet. Die Oberfläche zeigt die Liste für ein frei wählbares Jahr; Berichtszeiträume werden mit passenden Feiertagen und dem Hinweis angereichert, dass sie in diesem WBS-Ablauf unabhängig vom regionalen Geltungsbereich als schulungsfrei gelten. Datenbasis sind die Feiertagsübersicht der Deutschen Bundesbank und ergänzend die offiziellen Regelungen der Länder Bayern, Berlin und Sachsen.
 
 ## Lokale Prüfungen
 
@@ -82,13 +90,13 @@ Diese Hinweise sind keine Entscheidung über Annahme oder Rückgabe.
 
 ## KI-Konfiguration
 
-Die Konfiguration trennt globale Einstellungen von Profilen. Mehrere Profile können erstellt, gewählt, bearbeitet und gelöscht werden. Jedes Profil enthält Anbieter, Server, Chat- und Models-Endpunkt, Modell, manuelles Modell, Temperature, Timeout, Authentifizierungstyp und Token.
+Die Konfiguration trennt globale Einstellungen von Profilen. Mehrere Profile können erstellt, gewählt, bearbeitet und gelöscht werden. Jedes Profil enthält Anbieter, Server, Chat- und Models-Endpunkt, Modell, manuelles Modell, Temperature, maximale Ausgabetokens, Timeout, Authentifizierungstyp und Token.
 
 Normale Einstellungen liegen unter `wbsDeMonkeyFier.ai.settings.v1`. Tokens liegen getrennt unter `wbsDeMonkeyFier.ai.secrets.v1`. Beide Speicher verwenden `GM_getValue` und `GM_setValue`. Der Userscript-Speicher ist bequem, aber kein vollwertiger Passwort-Tresor.
 
-Die Standardkonfiguration verwendet ausschließlich `http://192.168.113.1:1234`. Eine Anfrage erfolgt erst durch „Verbindung testen“, „Modelle neu laden“ oder „Mit KI prüfen“. Bei öffentlichen IP-Adressen oder Hostnamen zeigt die Oberfläche eine Datenschutzwarnung.
+Die Standardkonfiguration verwendet das OpenAI-kompatible Gateway `https://llm.nik0.de` mit Bearer-Authentifizierung, enthält aber ausdrücklich kein Token. Eine Anfrage erfolgt erst durch „Verbindung testen“, „Modelle neu laden“ oder „Mit KI prüfen“. Weil der Host außerhalb des lokalen Netzes liegen kann, zeigt die Oberfläche eine Datenschutzwarnung. Alternativ lassen sich weiterhin rein lokale LM-Studio-Profile anlegen.
 
-Der Standard-Timeout beträgt 300.000 ms beziehungsweise fünf Minuten. Beim Update auf Version 2.0.1 werden Profile mit dem alten Standardwert von 60.000 ms einmalig auf den neuen Wert migriert; andere manuell gewählte Werte bleiben unverändert.
+Der Standard-Timeout beträgt 900.000 ms beziehungsweise fünfzehn Minuten. Beim Update werden Profile mit einem früheren Standardwert von 60.000 oder 300.000 ms einmalig auf den neuen Wert migriert; andere manuell gewählte Werte bleiben unverändert. HTTP 408 und 504 werden ausdrücklich als server- beziehungsweise proxyseitige Zeitlimits gemeldet, weil der Browser-Timeout diese Abbrüche nicht beheben kann.
 
 ## KI-Kommunikation und Fehlerbehandlung
 

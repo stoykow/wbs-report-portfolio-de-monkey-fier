@@ -27,7 +27,6 @@ Bei einer neuen Version kann das Script in Violentmonkey über „Aktualisieren�
 ### Einzelnes Berichtsheft
 
 - deutlich unterscheidbare Buttons für „Annehmen“ und „Zurückgeben“
-- umschaltbare Kommentarvorlagen
 - konfigurierbare Schlagwortsuche mit Markierungen
 - Prüfung der dreistelligen Berichtsnummer
 - Prüfung von Tages- und Gesamtstunden
@@ -36,6 +35,8 @@ Bei einer neuen Version kann das Script in Violentmonkey über „Aktualisieren�
 Die Begriffe `FPA`, `Prüfung`, `Test`, `Wiederholung` und `Vorbereitung` erzeugen für sich allein keine lokale Auffälligkeit.
 
 Alle Prüfungen sind Hinweise und ersetzen keine manuelle Beurteilung.
+
+Die frühere Leiste mit festen Kommentarvorlagen wurde ab Version 2.1.0 entfernt. KI-Kommentarvorschläge bleiben weiterhin bewusst übernehmbar.
 
 ## KI-Assistent
 
@@ -54,17 +55,20 @@ Eine KI-Prüfung startet ausschließlich nach einem Klick auf „Mit KI prüfen�
 
 ## KI-Konfiguration
 
-Die Standardkonfiguration ist für einen lokalen LM-Studio-Server vorbereitet:
+Die Standardkonfiguration ist für das OpenAI-kompatible LM-Studio-Gateway vorbereitet:
 
 ```text
 Anbieter:        LM Studio
-Server:          http://192.168.113.1:1234
+Server:          https://llm.nik0.de
 Models Endpoint: /v1/models
 Chat Endpoint:   /v1/chat/completions
 Temperature:     0.2
-Timeout:         300000 ms
-Authentifizierung: Keine
+Ausgabetokens:   500
+Timeout:         900000 ms
+Authentifizierung: Bearer Token
 ```
+
+Das Token wird nicht mit dem Userscript ausgeliefert und muss im eigenen Violentmonkey-Speicher eingetragen werden. Weil das Gateway außerhalb des lokalen Netzes liegen kann, zeigt das Script dafür eine Datenschutzwarnung.
 
 In den Einstellungen lassen sich folgende Werte ohne Änderung des Quellcodes bearbeiten:
 
@@ -72,7 +76,7 @@ In den Einstellungen lassen sich folgende Werte ohne Änderung des Quellcodes be
 - Anbieter: LM Studio, OpenAI-kompatible API oder benutzerdefiniert
 - Serveradresse und Endpunkte
 - automatisch geladene oder manuell eingegebene Modelle
-- Temperature und Timeout
+- Temperature, maximale Ausgabetokens und Timeout
 - keine Authentifizierung, Bearer Token oder API Key
 - zentraler Systemprompt
 - optionaler Debug-Modus
@@ -82,6 +86,16 @@ Beim Öffnen der KI-Einstellungen und beim Wechsel des Profils wird die Modellli
 ### KI-Profile
 
 Mehrere Serverkonfigurationen werden vollständig unterstützt. Profile können erstellt, ausgewählt, bearbeitet und gelöscht werden, beispielsweise für Büro, Zuhause oder einen Testserver. Das aktive Profil bestimmt Server, Modell und Authentifizierung.
+
+### Kurse und Berichtsnummern
+
+In den Einstellungen können mehrere Kurse mit Name und Startdatum angelegt werden. Für den aktiven Kurs gilt die Kalenderwoche des Kursstarts als Berichtswoche `001`. Erkennt das Script den Berichtszeitraum auf der WBS-Seite, berechnet es die erwartete dreistellige Berichtsnummer und vergleicht sie lokal mit dem eingetragenen Wert. Ohne erkennbaren Berichtszeitraum wird keine Nummer vermutet.
+
+### Feiertage
+
+Der Einstellungsdialog enthält eine nach Jahr wählbare Liste der gesetzlichen Feiertage in Deutschland einschließlich landesweiter, örtlicher und bekannter einmaliger Sonderfälle. Die Berechnung erfolgt vollständig lokal und benötigt keine Kalender-API. Die Vereinigungsmenge wird entsprechend dem vorgesehenen WBS-Ablauf unabhängig vom regionalen Geltungsbereich als schulungsfrei behandelt und zusammen mit dem erkannten Berichtszeitraum an die KI übergeben. Leere Wochenenden werden nicht an die KI übertragen.
+
+Die Feiertagsdaten orientieren sich an der [Feiertagsübersicht der Deutschen Bundesbank](https://www.bundesbank.de/resource/blob/749314/05f64c15196c20776ae7c22a2739b03c/mL/feiertage-in-deutschland-1-data.pdf). Örtliche und besondere Fälle sind zusätzlich anhand offizieller Quellen für [Bayern](https://www.stmi.bayern.de/staat-und-verfassung/feiertage/), [Berlin](https://gesetze.berlin.de/bsbe/document/jlr-FeiertGBEV9P1) und [Sachsen](https://www.revosax.sachsen.de/vorschrift_gesamt/3997/26160.pdf) erfasst.
 
 ## LM Studio einrichten
 
@@ -108,7 +122,7 @@ Tokens gehören niemals in den Quellcode, in Git, in Screenshots oder in Fehlerb
 
 Berichtsheftdaten können personenbezogen sein. Deshalb gilt:
 
-- Standardziel ist ausschließlich der lokale Server `192.168.113.1`.
+- Das vorbereitete Gateway `llm.nik0.de` kann sich außerhalb des lokalen Netzes befinden und wird deshalb sichtbar gekennzeichnet.
 - Bei möglicherweise externen Servern erscheint eine deutliche Warnung.
 - Übertragen werden nur Berichtsnummer, Gesamtstunden sowie Wochentage mit Stunden und vorhandenen Tätigkeitsbeschreibungen.
 - Namen, E-Mail-Adressen, Benutzer-IDs, Account-IDs und sonstige Metadaten werden nicht extrahiert.
@@ -149,7 +163,7 @@ Die vollständige Bestandsanalyse, DOM-Selektoren und Modulgrenzen stehen in [do
 
 ## Erweiterte klassische Konfiguration
 
-Die Listen `commentTemplates` und `commentPOIs` am Anfang des Userscripts können weiterhin direkt angepasst werden. Profile und KI-Einstellungen sollten dagegen über die Oberfläche verwaltet werden, damit sie bei Script-Updates im Violentmonkey-Speicher erhalten bleiben.
+Die Liste `commentPOIs` am Anfang des Userscripts kann weiterhin direkt angepasst werden. Profile, Kurse und KI-Einstellungen sollten dagegen über die Oberfläche verwaltet werden, damit sie bei Script-Updates im Violentmonkey-Speicher erhalten bleiben.
 
 ## FAQ
 
