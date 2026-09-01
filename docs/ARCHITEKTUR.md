@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.1.0
+Stand: Version 2.2.0
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -90,7 +90,7 @@ Diese Hinweise sind keine Entscheidung über Annahme oder Rückgabe.
 
 ## KI-Konfiguration
 
-Die Konfiguration trennt globale Einstellungen von Profilen. Mehrere Profile können erstellt, gewählt, bearbeitet und gelöscht werden. Jedes Profil enthält Anbieter, Server, Chat- und Models-Endpunkt, Modell, manuelles Modell, Temperature, maximale Ausgabetokens, Timeout, Authentifizierungstyp und Token.
+Die Konfiguration trennt globale Einstellungen von Profilen. Mehrere Profile können erstellt, gewählt, bearbeitet und gelöscht werden. Jedes Profil enthält Anbieter, Server, Chat- und Models-Endpunkt, Modell, manuelles Modell, Temperature, maximale Ausgabetokens, Reasoning-Modus, Reasoning-Stufe, Timeout, Authentifizierungstyp und Token.
 
 Normale Einstellungen liegen unter `wbsDeMonkeyFier.ai.settings.v1`. Tokens liegen getrennt unter `wbsDeMonkeyFier.ai.secrets.v1`. Beide Speicher verwenden `GM_getValue` und `GM_setValue`. Der Userscript-Speicher ist bequem, aber kein vollwertiger Passwort-Tresor.
 
@@ -106,9 +106,11 @@ Der Standard-Timeout beträgt 900.000 ms beziehungsweise fünfzehn Minuten. Beim
 
 Der Einstellungsdialog lädt die Modelle des aktiven Profils direkt beim Öffnen und erneut bei einem Profilwechsel. Die manuelle Aktualisierung bleibt zusätzlich verfügbar.
 
+Reasoning wird je Profil als `reasoningMode` (`auto`, `off`, `on`) und `reasoningEffort` (`low`, `medium`, `high`) gespeichert. `auto` ergänzt keine Vorgabe. Für erkannte OpenAI-Reasoning-Modelle werden bei `on` die passenden `reasoning_effort`-Werte gesendet; `none` wird nur bei GPT-5.1 für „Aus“ verwendet. Bei LM Studio `gpt-oss` über den bestehenden Chat-Completions-Endpunkt wird die unterstützte Harmony-Systemanweisung nur temporär an den Request angehängt. Unbekannte Anbieter und Modelle erhalten keine zusätzlichen Parameter. Lehnt ein unterstützter Server den Parameter mit 400, 404 oder 422 ab, erfolgt ein einmaliger Fallback ohne ihn.
+
 `callAi()` sendet eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
 
-Die Einstellungsmigration ersetzt ausschließlich den unveränderten früheren Standardprompt. Benutzerdefinierte Systemprompts werden nicht überschrieben.
+Die Einstellungsmigration ersetzt ausschließlich den unveränderten früheren Standardprompt. Benutzerdefinierte Systemprompts werden nicht überschrieben. Reasoning-Anweisungen für erkannte LM-Studio-gpt-oss-Profile werden nur für den einzelnen Request ergänzt und nie in den gespeicherten Systemprompt geschrieben.
 
 Der optionale Debug-Modus protokolliert nur technische Ereignisse und Statuscodes. Tokens, Berichtsheftinhalte und personenbezogene Daten werden nicht protokolliert.
 

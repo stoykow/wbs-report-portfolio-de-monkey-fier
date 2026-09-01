@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.1.0
+// @version       2.2.0
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -28,7 +28,7 @@
     const SCRIPT_NAME = "WBS Berichtsheft de-monkey-fier";
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
-    const AI_SETTINGS_SCHEMA_VERSION = 4;
+    const AI_SETTINGS_SCHEMA_VERSION = 5;
     const DAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
     const DAY_ALIASES = [
         ["montag", "monday", "mo"], ["dienstag", "tuesday", "di"],
@@ -124,6 +124,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             manualModel: String(source.manualModel || ""),
             temperature: numberInRange(source.temperature, DEFAULT_PROFILE.temperature, 0, 2),
             maxTokens: numberInRange(source.maxTokens, DEFAULT_PROFILE.maxTokens, 1, 32768),
+            reasoningMode: ["auto", "off", "on"].includes(source.reasoningMode) ? source.reasoningMode : "auto",
+            reasoningEffort: ["low", "medium", "high"].includes(source.reasoningEffort) ? source.reasoningEffort : "medium",
             timeout: numberInRange(source.timeout, DEFAULT_PROFILE.timeout, 1000, 900000),
             authType: ["none", "bearer", "api-key"].includes(source.authType) ? source.authType : "none",
             token: typeof source.token === "string" ? source.token : ""
@@ -628,8 +630,32 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return issues;
     }
 
-    function buildAiSystemPrompt(settings = loadAiConfig()) {
-        return settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    function isLmStudioGptOssChat(profile) {
+        return profile && profile.provider === "lm-studio" && /gpt-oss/i.test(selectedModel(profile)) && /\/chat\/completions(?:[/?]|$)/i.test(String(profile.chatEndpoint || ""));
+    }
+
+    function isOpenAiReasoningModel(profile) {
+        if (!profile || profile.provider !== "openai-compatible") return false;
+        const model = selectedModel(profile);
+        return /(^|[/:_-])(o1(?:-mini|-preview|$)|o3(?:-mini|-pro|$)|o4(?:-mini|$)|gpt-5(?:\.\d+)?(?:-[a-z0-9.-]+)?)(?:$|[/:_-])/i.test(model);
+    }
+
+    function getReasoningRequestParameters(profile) {
+        const mode = ["auto", "off", "on"].includes(profile && profile.reasoningMode) ? profile.reasoningMode : "auto";
+        const effort = ["low", "medium", "high"].includes(profile && profile.reasoningEffort) ? profile.reasoningEffort : "medium";
+        if (mode === "auto" || !isOpenAiReasoningModel(profile)) return {};
+        if (mode === "off") {
+            const model = selectedModel(profile).toLocaleLowerCase("en-US");
+            return /^gpt-5\.1(?:$|[-/:])/i.test(model) ? { reasoning_effort: "none" } : {};
+        }
+        return { reasoning_effort: effort };
+    }
+
+    function buildAiSystemPrompt(settings = loadAiConfig(), profile = null) {
+        const prompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+        if (!isLmStudioGptOssChat(profile) || profile.reasoningMode !== "on") return prompt;
+        const effort = ["low", "medium", "high"].includes(profile.reasoningEffort) ? profile.reasoningEffort : "medium";
+        return `${prompt}\n\nReasoning: ${effort}`;
     }
 
     function buildAiRequest(reportData, profile, settings = loadAiConfig()) {
@@ -640,8 +666,9 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             model,
             temperature: profile.temperature,
             max_tokens: profile.maxTokens,
+            ...getReasoningRequestParameters(profile),
             messages: [
-                { role: "system", content: buildAiSystemPrompt(settings) },
+                { role: "system", content: buildAiSystemPrompt(settings, profile) },
                 { role: "user", content: `Prüfe dieses minimierte Berichtsheft. Nutze ausschließlich die folgenden Daten und antworte nur als JSON:\n${JSON.stringify(reportData)}` }
             ]
         };
@@ -649,13 +676,22 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
 
     async function callAi(reportData, profile, settings = loadAiConfig()) {
         debugLog(settings, "AI request started", { modelSelected: Boolean(selectedModel(profile)) });
-        const response = await gmRequest({
+        const request = buildAiRequest(reportData, profile, settings);
+        const requestOptions = {
             method: "POST",
             url: joinUrl(profile.baseUrl, profile.chatEndpoint),
             headers: { "Content-Type": "application/json", Accept: "application/json", ...buildAuthHeaders(profile) },
-            data: JSON.stringify(buildAiRequest(reportData, profile, settings)),
+            data: JSON.stringify(request),
             timeout: profile.timeout
-        });
+        };
+        let response = await gmRequest(requestOptions);
+        const reasoningParameterWasSent = Object.prototype.hasOwnProperty.call(request, "reasoning_effort");
+        if (reasoningParameterWasSent && [400, 404, 422].includes(Number(response.status))) {
+            const fallbackRequest = { ...request };
+            delete fallbackRequest.reasoning_effort;
+            debugLog(settings, "Reasoning parameter unsupported; retrying without it", { status: response.status });
+            response = await gmRequest({ ...requestOptions, data: JSON.stringify(fallbackRequest) });
+        }
         debugLog(settings, "AI response", { status: response.status });
         const httpError = classifyHttpError(response.status);
         if (httpError) throw httpError;
@@ -850,6 +886,9 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const manualModel = makeInput("wbs-ai-manual-model", ""); manualModel.placeholder = "Optional, überschreibt das Dropdown";
         const temperature = makeInput("wbs-ai-temperature", "", "number"); temperature.min = "0"; temperature.max = "2"; temperature.step = "0.1";
         const maxTokens = makeInput("wbs-ai-max-tokens", "", "number"); maxTokens.min = "1"; maxTokens.max = "32768"; maxTokens.step = "1";
+        const reasoningSelect = createElement("select"); reasoningSelect.id = "wbs-ai-reasoning";
+        [["auto", "Automatisch"], ["off", "Aus"], ["low", "Niedrig"], ["medium", "Mittel"], ["high", "Hoch"]]
+            .forEach(([value, text]) => reasoningSelect.appendChild(new Option(text, value)));
         const timeout = makeInput("wbs-ai-timeout", "", "number"); timeout.min = "1000"; timeout.max = "900000"; timeout.step = "1000";
         const authEnabled = makeInput("wbs-ai-auth-enabled", "", "checkbox");
         const authType = createElement("select"); authType.id = "wbs-ai-auth";
@@ -860,9 +899,10 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             ["KI-Unterstützung aktivieren", enabled], ["Debug-Modus", debug], ["KI-Profil", profileSelect],
             ["Profilname", name], ["Anbieter", provider], ["KI-Server", baseUrl], ["Chat Endpoint", chatEndpoint],
             ["Models Endpoint", modelsEndpoint], ["Modell", modelSelect], ["Modellname manuell eingeben", manualModel],
-            ["Temperature", temperature], ["Max. Ausgabetokens", maxTokens], ["Timeout (ms)", timeout], ["Authentifizierung verwenden", authEnabled], ["Authentifizierungstyp", authType],
+            ["Temperature", temperature], ["Max. Ausgabetokens", maxTokens], ["Reasoning / Thinking", reasoningSelect], ["Timeout (ms)", timeout], ["Authentifizierung verwenden", authEnabled], ["Authentifizierungstyp", authType],
             ["API Token / API Key", token], ["Systemprompt", prompt]
         ].forEach(([labelText, input]) => grid.append(labelFor(labelText, input), input));
+        modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Automatisch sendet keine Reasoning-Vorgabe. Niedrig, Mittel und Hoch werden nur für erkannte kompatible Anbieter/Modelle verwendet; nicht unterstützte Vorgaben werden automatisch weggelassen." }));
         modal.appendChild(grid);
         modal.appendChild(createElement("h3", { text: "Kurse und Berichtswoche" }));
         const courseGrid = createElement("div", { className: "wbs-dmf-grid" });
@@ -932,9 +972,12 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const persistVisibleProfile = () => {
             const current = findProfile();
             if (!current) return;
+            const reasoningSelection = reasoningSelect.value;
             Object.assign(current, normalizeProfile({ ...current, name: name.value.trim() || current.name, provider: provider.value,
                 baseUrl: baseUrl.value, chatEndpoint: chatEndpoint.value, modelsEndpoint: modelsEndpoint.value,
                 model: modelSelect.value, manualModel: manualModel.value, temperature: temperature.value, maxTokens: maxTokens.value,
+                reasoningMode: reasoningSelection === "auto" || reasoningSelection === "off" ? reasoningSelection : "on",
+                reasoningEffort: ["low", "medium", "high"].includes(reasoningSelection) ? reasoningSelection : current.reasoningEffort,
                 timeout: timeout.value, authType: authEnabled.checked ? (authType.value === "none" ? "bearer" : authType.value) : "none", token: token.value }));
         };
         const renderProfileOptions = () => {
@@ -945,7 +988,9 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             name.value = current.name; provider.value = current.provider; baseUrl.value = current.baseUrl;
             chatEndpoint.value = current.chatEndpoint; modelsEndpoint.value = current.modelsEndpoint;
             replaceModelOptions([], current.model); manualModel.value = current.manualModel;
-            temperature.value = String(current.temperature); maxTokens.value = String(current.maxTokens); timeout.value = String(current.timeout);
+            temperature.value = String(current.temperature); maxTokens.value = String(current.maxTokens);
+            reasoningSelect.value = current.reasoningMode === "auto" ? "auto" : current.reasoningMode === "off" ? "off" : current.reasoningEffort;
+            timeout.value = String(current.timeout);
             authEnabled.checked = current.authType !== "none"; authType.value = current.authType;
             authType.disabled = !authEnabled.checked; token.value = current.token; token.disabled = !authEnabled.checked; updateWarning();
         };
@@ -1267,7 +1312,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         selectedModel, joinUrl, buildAuthHeaders, gmRequest, classifyHttpError,
         parseModelsResponse, getAvailableModels, testAiConnection, detectDayIndex, parseHours, parseDateValue,
         normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
-        extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiRequest, callAi, extractJsonText,
+        extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getReasoningRequestParameters, buildAiRequest, callAi, extractJsonText,
         normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };

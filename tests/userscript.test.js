@@ -28,6 +28,8 @@ const {
     extractReportData,
     reportNumberMessage,
     validateReport,
+    buildAiSystemPrompt,
+    getReasoningRequestParameters,
     buildAiRequest,
     callAi,
     parseAiResponse,
@@ -69,12 +71,21 @@ test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
     assert.equal(getActiveAiProfile(settings).id, "test");
 });
 
+test("normalisiert fehlende oder ungültige Reasoning-Werte auf Automatisch", () => {
+    const defaults = normalizeAiSettings({ profiles: [{ id: "ohne-reasoning" }] });
+    assert.equal(defaults.profiles[0].reasoningMode, "auto");
+    assert.equal(defaults.profiles[0].reasoningEffort, "medium");
+    const invalid = normalizeAiSettings({ profiles: [{ id: "ungültig", reasoningMode: "nonsense", reasoningEffort: "extreme" }] });
+    assert.equal(invalid.profiles[0].reasoningMode, "auto");
+    assert.equal(invalid.profiles[0].reasoningEffort, "medium");
+});
+
 test("migriert frühere Standard-Timeouts einmalig auf fünfzehn Minuten", () => {
     const oldSettings = normalizeAiSettings({
         schemaVersion: 1,
         profiles: [{ id: "alt", name: "Alt", timeout: 60000 }]
     });
-    assert.equal(oldSettings.schemaVersion, 4);
+    assert.equal(oldSettings.schemaVersion, 5);
     assert.equal(oldSettings.profiles[0].timeout, 900000);
 
     const currentSettings = normalizeAiSettings({
@@ -96,7 +107,7 @@ test("migriert frühere Standard-Timeouts einmalig auf fünfzehn Minuten", () =>
     global.GM_getValue = (key, fallback) => storage.has(key) ? storage.get(key) : fallback;
     global.GM_setValue = (key, value) => storage.set(key, value);
     assert.equal(loadAiConfig().profiles[0].timeout, 900000);
-    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 4);
+    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 5);
     delete global.GM_getValue;
     delete global.GM_setValue;
 });
@@ -390,6 +401,20 @@ test("baut eine minimierte und ausgabebegrenzte Chat-Completions-Anfrage", () =>
     assert.throws(() => buildAiRequest(report, { model: "", manualModel: "" }, { systemPrompt: DEFAULT_SYSTEM_PROMPT }), /Kein KI-Modell/);
 });
 
+test("wendet Reasoning nur provider- und modellabhängig an", () => {
+    const base = { provider: "openai-compatible", model: "o3-mini", manualModel: "", reasoningMode: "on", reasoningEffort: "high" };
+    assert.deepEqual(getReasoningRequestParameters(base), { reasoning_effort: "high" });
+    assert.deepEqual(getReasoningRequestParameters({ ...base, reasoningMode: "auto" }), {});
+    assert.deepEqual(getReasoningRequestParameters({ ...base, model: "gpt-5.1", reasoningMode: "off" }), { reasoning_effort: "none" });
+    assert.deepEqual(getReasoningRequestParameters({ ...base, reasoningMode: "off" }), {});
+    assert.deepEqual(getReasoningRequestParameters({ ...base, provider: "custom" }), {});
+
+    const lmProfile = { provider: "lm-studio", model: "openai/gpt-oss-20b", chatEndpoint: "/v1/chat/completions", reasoningMode: "on", reasoningEffort: "low" };
+    assert.deepEqual(getReasoningRequestParameters(lmProfile), {});
+    assert.match(buildAiSystemPrompt({ systemPrompt: "Mein Prompt" }, lmProfile), /Reasoning: low/);
+    assert.equal(buildAiSystemPrompt({ systemPrompt: "Mein Prompt" }, { ...lmProfile, reasoningMode: "auto" }), "Mein Prompt");
+});
+
 test("parst valides JSON und Markdown-Codeblöcke", () => {
     const direct = parseAiResponse('{"status":"ok","summary":"Passt","issues":[],"suggestedComment":""}');
     assert.equal(direct.status, "ok");
@@ -486,6 +511,22 @@ test("verarbeitet eine vollständige Chat-Completions-Antwort", async () => {
     const result = await callAi({ days: [{ weekday: "Montag", hours: 8, entries: ["Server"] }] }, profile, { debug: false, systemPrompt: DEFAULT_SYSTEM_PROMPT });
     assert.equal(result.status, "warning");
     assert.equal(result.suggestedComment, "Bitte genauer beschreiben.");
+    delete global.GM_xmlhttpRequest;
+});
+
+test("wiederholt den Chat-Request ohne abgelehnten Reasoning-Parameter", async () => {
+    const requests = [];
+    global.GM_xmlhttpRequest = options => {
+        requests.push(JSON.parse(options.data));
+        if (requests.length === 1) options.onload({ status: 400, responseText: "unsupported reasoning_effort" });
+        else options.onload({ status: 200, responseText: JSON.stringify({ choices: [{ message: { content: '{"status":"ok","formalIssues":[],"contentIssues":[],"hourIssues":[],"notes":[],"suggestedComment":""}' } }] }) });
+    };
+    const profile = { ...defaultAiSettings().profiles[0], provider: "openai-compatible", baseUrl: "http://localhost:1234", model: "o3-mini", authType: "none", reasoningMode: "on", reasoningEffort: "high" };
+    const result = await callAi({ days: [{ weekday: "Montag", hours: 8, entries: ["Konkrete Tätigkeit dokumentiert"] }] }, profile, { debug: false, systemPrompt: DEFAULT_SYSTEM_PROMPT });
+    assert.equal(result.status, "ok");
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].reasoning_effort, "high");
+    assert.equal(Object.prototype.hasOwnProperty.call(requests[1], "reasoning_effort"), false);
     delete global.GM_xmlhttpRequest;
 });
 

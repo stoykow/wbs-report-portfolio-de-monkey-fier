@@ -76,12 +76,14 @@ In den Einstellungen lassen sich folgende Werte ohne Änderung des Quellcodes be
 - Anbieter: LM Studio, OpenAI-kompatible API oder benutzerdefiniert
 - Serveradresse und Endpunkte
 - automatisch geladene oder manuell eingegebene Modelle
-- Temperature, maximale Ausgabetokens und Timeout
+- Temperature, maximale Ausgabetokens, Reasoning / Thinking und Timeout
 - keine Authentifizierung, Bearer Token oder API Key
 - zentraler Systemprompt
 - optionaler Debug-Modus
 
 Beim Öffnen der KI-Einstellungen und beim Wechsel des Profils wird die Modellliste automatisch geladen. „Verbindung testen“ prüft den Models-Endpunkt zusätzlich; „Modelle neu laden“ bleibt für eine manuelle Aktualisierung verfügbar. Wenn ein Server keine Modellliste unterstützt, kann der Modellname manuell eingetragen werden.
+
+Jedes KI-Profil besitzt die Auswahl „Reasoning / Thinking“ mit „Automatisch“, „Aus“, „Niedrig“, „Mittel“ und „Hoch“. „Automatisch“ sendet keine Reasoning-Vorgabe. Niedrig, Mittel und Hoch werden nur für erkannte kompatible Anbieter und Modelle verwendet. Nicht unterstützte Parameter werden weggelassen; wenn ein Server eine erkannte Vorgabe trotzdem ablehnt, wird die Anfrage einmal ohne diese Vorgabe wiederholt.
 
 ### KI-Profile
 
@@ -140,7 +142,7 @@ Der Systemprompt fordert ein JSON-Objekt mit `status`, `summary`, `formalIssues`
 
 Der Standardprompt verbietet ausdrücklich, fehlende Tätigkeiten oder Zusammenhänge zu erfinden. Bei unklaren Einträgen soll die KI eine genauere Beschreibung anfordern.
 
-Beim Update auf Version 2.0.2 wird nur der unveränderte frühere Standardprompt auf das neue Schema aktualisiert. Eigene oder bereits angepasste Systemprompts bleiben erhalten.
+Bei Updates wird nur der unveränderte frühere Standardprompt auf das neue Schema aktualisiert. Eigene oder bereits angepasste Systemprompts bleiben erhalten.
 
 Der Einstellungsdialog zeigt an, ob der Standardprompt oder ein eigener gespeicherter Prompt aktiv ist. Ein eigener Prompt bleibt auch bei weiteren Script-Updates erhalten. Nur „Standardprompt wiederherstellen“ ersetzt ihn bewusst.
 
