@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.3.0
+Stand: Version 2.3.1
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -112,7 +112,7 @@ Die strukturierte KI-Ausgabe wird in kompakten Tageszeilen gerendert: Original, 
 
 `callAi()` sendet für LM Studio die native Chat-Anfrage und für andere Anbieter weiterhin eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
 
-Die Einstellungsmigration ersetzt ausschließlich den unveränderten früheren Standardprompt. Benutzerdefinierte Systemprompts werden nicht überschrieben. Reasoning-Werte werden pro Profil gespeichert; ältere Profile erhalten automatisch `reasoning: "auto"`.
+Die Einstellungsmigration ersetzt ausschließlich bekannte, unveränderte frühere Standardprompts. Benutzerdefinierte Systemprompts werden nicht überschrieben. Reasoning-Werte werden pro Profil gespeichert; ältere Profile erhalten automatisch `reasoning: "auto"`.
 
 Der optionale Debug-Modus protokolliert nur technische Ereignisse und Statuscodes. Tokens, Berichtsheftinhalte und personenbezogene Daten werden nicht protokolliert.
 

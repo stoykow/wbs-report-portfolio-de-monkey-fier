@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.3.0
+// @version       2.3.1
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -55,7 +55,7 @@ Prüfe insbesondere Konkretheit und Nachvollziehbarkeit der Tätigkeiten und Ler
 
 Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere Hinweise sachlich, kurz und konstruktiv. Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, issues und suggestedComment. Jedes issue darf day, type, original, message und suggestion enthalten.`;
 
-    const DEFAULT_SYSTEM_PROMPT = `Du unterstützt einen Ausbilder bei der Prüfung von Ausbildungsberichtsheften.
+    const PREVIOUS_DEFAULT_SYSTEM_PROMPT = `Du unterstützt einen Ausbilder bei der Prüfung von Ausbildungsberichtsheften.
 
 Bewerte ausschließlich die bereitgestellten Inhalte. Erfinde keine Tätigkeiten, Technologien, Inhalte oder Zusammenhänge. Wenn eine Beschreibung nicht konkret genug ist, fordere eine genauere Beschreibung an und kennzeichne Unsicherheit ausdrücklich.
 
@@ -68,6 +68,30 @@ Die Berichtsnummer muss dreistellig sein. Melde eine ein- oder zweistellige Beri
 Der Abschnitt beziehungsweise das Modul muss im Bericht vollständig ausgeschrieben und eindeutig angegeben sein. Eine reine Abkürzung oder ein fehlender Modulname ist als formale Auffälligkeit unter formalIssues zu melden.
 
 Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere Hinweise sachlich, kurz und konstruktiv. Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, formalIssues, contentIssues, hourIssues, notes und suggestedComment. Formale Auffälligkeiten, inhaltliche Auffälligkeiten und Stundenauffälligkeiten müssen in den jeweils passenden Arrays stehen. Neutrale Hinweise gehören ausschließlich in notes. Einträge dürfen day, type, original, message und suggestion enthalten.`;
+
+    const PRE_MODULE_DEFAULT_SYSTEM_PROMPT = PREVIOUS_DEFAULT_SYSTEM_PROMPT.replace(`
+
+Der Abschnitt beziehungsweise das Modul muss im Bericht vollständig ausgeschrieben und eindeutig angegeben sein. Eine reine Abkürzung oder ein fehlender Modulname ist als formale Auffälligkeit unter formalIssues zu melden.`, "");
+
+    const DEFAULT_SYSTEM_PROMPT = PREVIOUS_DEFAULT_SYSTEM_PROMPT
+        .replace(
+            "Der Abschnitt beziehungsweise das Modul muss im Bericht vollständig ausgeschrieben und eindeutig angegeben sein. Eine reine Abkürzung oder ein fehlender Modulname ist als formale Auffälligkeit unter formalIssues zu melden.",
+            "Das Feld „Abschnitt/Modul“ muss die vollständige und eindeutige Modulbezeichnung enthalten. Eine alleinstehende Abkürzung oder ein fehlender Modulname reicht nicht aus und ist ausschließlich unter formalIssues zu melden. Eine Abkürzung darf zusätzlich hinter der ausgeschriebenen Modulbezeichnung stehen."
+        )
+        .replace(
+            "Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere Hinweise sachlich, kurz und konstruktiv. Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, formalIssues, contentIssues, hourIssues, notes und suggestedComment. Formale Auffälligkeiten, inhaltliche Auffälligkeiten und Stundenauffälligkeiten müssen in den jeweils passenden Arrays stehen. Neutrale Hinweise gehören ausschließlich in notes. Einträge dürfen day, type, original, message und suggestion enthalten.",
+            `Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere alle Rückmeldungen an die teilnehmende Person sachlich, kurz und konsequent in direkter Du-Ansprache. Verwende dabei „du“, „dir“ und „dein“.
+
+Setze status nur dann auf „ok“, wenn formalIssues, contentIssues und hourIssues vollständig leer sind. Neutrale Hinweise gehören ausschließlich in notes und zählen nicht als Auffälligkeit.
+
+Melde jede Auffälligkeit nur einmal und ordne sie ausschließlich dem passendsten Array zu. Behaupte in summary niemals, es gebe keine Auffälligkeiten, wenn mindestens eines der drei Auffälligkeitsarrays einen Eintrag enthält.
+
+suggestedComment enthält ausschließlich konkrete Korrekturen oder notwendige Rückfragen aus formalIssues, contentIssues und hourIssues. Nenne dort nichts, was bereits gut oder korrekt ist, übernimm keine neutralen notes und erzeuge keine allgemeine Zusammenfassung. Sind diese drei Arrays leer, bleibt suggestedComment leer. Ausnahme: Bei den Berichtsnummern 001 bis 005, auch wenn die führenden Nullen noch fehlen, darf suggestedComment zusätzlich genau einen kurzen ermutigenden Satz enthalten. Zähle dabei trotzdem keine positiven Einzelheiten auf.
+
+Samstag und Sonntag dürfen leer bleiben und benötigen keine Tätigkeiten oder Stunden. Beanstande das Wochenende nur, wenn dort tatsächlich Tätigkeiten oder positive Stunden eingetragen sind.
+
+Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, formalIssues, contentIssues, hourIssues, notes und suggestedComment. Formale Auffälligkeiten, inhaltliche Auffälligkeiten und Stundenauffälligkeiten müssen in den jeweils passenden Arrays stehen. Einträge dürfen day, type, original, message und suggestion enthalten. Antworte ohne Markdown und ohne zusätzlichen Text außerhalb des JSON-Objekts.`
+        );
 
     const DEFAULT_PROFILE = Object.freeze({
         id: "lmstudio-main",
@@ -194,6 +218,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         const activeCourseId = courses.some(course => course.id === source.activeCourseId)
             ? source.activeCourseId
             : courses[0] && courses[0].id || "";
+        const storedSystemPrompt = typeof source.systemPrompt === "string" ? source.systemPrompt : "";
+        const knownPreviousDefaultPrompts = [LEGACY_DEFAULT_SYSTEM_PROMPT, PRE_MODULE_DEFAULT_SYSTEM_PROMPT, PREVIOUS_DEFAULT_SYSTEM_PROMPT];
         return {
             schemaVersion: AI_SETTINGS_SCHEMA_VERSION,
             enabled: source.enabled !== false,
@@ -202,8 +228,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             profiles,
             activeCourseId,
             courses,
-            systemPrompt: typeof source.systemPrompt === "string" && source.systemPrompt.trim() && source.systemPrompt !== LEGACY_DEFAULT_SYSTEM_PROMPT
-                ? source.systemPrompt
+            systemPrompt: storedSystemPrompt.trim() && !knownPreviousDefaultPrompts.includes(storedSystemPrompt)
+                ? storedSystemPrompt
                 : DEFAULT_SYSTEM_PROMPT
         };
     }
@@ -1540,7 +1566,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     }
 
     const testExports = {
-        DEFAULT_SYSTEM_PROMPT, LEGACY_DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeCourse, normalizeAiSettings,
+        DEFAULT_SYSTEM_PROMPT, PREVIOUS_DEFAULT_SYSTEM_PROMPT, PRE_MODULE_DEFAULT_SYSTEM_PROMPT, LEGACY_DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeCourse, normalizeAiSettings,
         loadAiConfig, saveAiConfig, getAiProfiles, saveAiProfiles, getActiveAiProfile, getActiveCourse,
         selectedModel, joinUrl, buildAuthHeaders, gmRequest, classifyHttpError,
         parseModelsResponse, parseLmStudioModelsResponse, normalizeReasoningCapabilities, getAvailableModels, getLmStudioModels, getModelsForProfile, testAiConnection, detectDayIndex, parseHours, parseDateValue,

@@ -5,6 +5,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
     DEFAULT_SYSTEM_PROMPT,
+    PREVIOUS_DEFAULT_SYSTEM_PROMPT,
+    PRE_MODULE_DEFAULT_SYSTEM_PROMPT,
     LEGACY_DEFAULT_SYSTEM_PROMPT,
     defaultAiSettings,
     normalizeCourse,
@@ -63,9 +65,15 @@ test("liefert die LM-Studio-Gateway-Standardkonfiguration ohne eingebettetes Tok
     assert.equal(settings.profiles[0].token, "");
 });
 
-test("fordert im Standardprompt ein ausgeschriebenes Modul", () => {
-    assert.match(DEFAULT_SYSTEM_PROMPT, /vollständig ausgeschrieben und eindeutig angegeben/);
-    assert.match(DEFAULT_SYSTEM_PROMPT, /fehlender Modulname/);
+test("fordert im Standardprompt ein ausgeschriebenes Modul und direkte Du-Ansprache", () => {
+    assert.match(DEFAULT_SYSTEM_PROMPT, /vollständige und eindeutige Modulbezeichnung/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /alleinstehende Abkürzung/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /direkter Du-Ansprache/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /ausschließlich konkrete Korrekturen oder notwendige Rückfragen/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /Berichtsnummern 001 bis 005/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /Sind diese drei Arrays leer, bleibt suggestedComment leer/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /Melde jede Auffälligkeit nur einmal/);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /Behaupte in summary niemals/);
 });
 
 test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
@@ -124,6 +132,9 @@ test("aktualisiert nur den früheren Standardprompt und erhält eigene Prompts",
     const migrated = normalizeAiSettings({ schemaVersion: 2, systemPrompt: LEGACY_DEFAULT_SYSTEM_PROMPT, profiles: [defaultAiSettings().profiles[0]] });
     assert.equal(migrated.systemPrompt, DEFAULT_SYSTEM_PROMPT);
     assert.notEqual(migrated.systemPrompt, LEGACY_DEFAULT_SYSTEM_PROMPT);
+
+    assert.equal(normalizeAiSettings({ systemPrompt: PRE_MODULE_DEFAULT_SYSTEM_PROMPT }).systemPrompt, DEFAULT_SYSTEM_PROMPT);
+    assert.equal(normalizeAiSettings({ systemPrompt: PREVIOUS_DEFAULT_SYSTEM_PROMPT }).systemPrompt, DEFAULT_SYSTEM_PROMPT);
 
     const customPrompt = "Mein bewusst angepasster Systemprompt mit neuem Schema.";
     const preserved = normalizeAiSettings({ schemaVersion: 2, systemPrompt: customPrompt, profiles: [defaultAiSettings().profiles[0]] });

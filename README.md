@@ -81,7 +81,7 @@ In den Einstellungen lassen sich folgende Werte ohne Änderung des Quellcodes be
 - zentraler Systemprompt
 - optionaler Debug-Modus
 
-Der eingebaute Systemprompt verlangt außerdem, dass Abschnitt beziehungsweise Modul vollständig ausgeschrieben und eindeutig angegeben werden.
+Der eingebaute Systemprompt verlangt außerdem eine vollständig ausgeschriebene und eindeutige Modulbezeichnung; eine alleinstehende Abkürzung reicht nicht aus. Rückmeldungen werden in direkter Du-Ansprache formuliert. Der Kommentarvorschlag enthält nur konkrete Korrekturen und notwendige Rückfragen, keine positiven oder neutralen Punkte. Lediglich bei den ersten fünf Berichten darf genau ein kurzer ermutigender Satz ergänzt werden.
 
 Beim Öffnen der KI-Einstellungen und beim Wechsel des Profils wird die Modellliste automatisch geladen. „Verbindung testen“ prüft den Models-Endpunkt zusätzlich; „Modelle neu laden“ bleibt für eine manuelle Aktualisierung verfügbar. Wenn ein Server keine Modellliste unterstützt, kann der Modellname manuell eingetragen werden.
 
@@ -146,7 +146,7 @@ Der Systemprompt fordert ein JSON-Objekt mit `status`, `summary`, `formalIssues`
 
 Der Standardprompt verbietet ausdrücklich, fehlende Tätigkeiten oder Zusammenhänge zu erfinden. Bei unklaren Einträgen soll die KI eine genauere Beschreibung anfordern.
 
-Bei Updates wird nur der unveränderte frühere Standardprompt auf das neue Schema aktualisiert. Eigene oder bereits angepasste Systemprompts bleiben erhalten.
+Bei Updates werden nur bekannte, unveränderte frühere Standardprompts auf die aktuelle Fassung aktualisiert. Eigene oder bereits angepasste Systemprompts bleiben erhalten.
 
 Der Einstellungsdialog zeigt an, ob der Standardprompt oder ein eigener gespeicherter Prompt aktiv ist. Ein eigener Prompt bleibt auch bei weiteren Script-Updates erhalten. Nur „Standardprompt wiederherstellen“ ersetzt ihn bewusst.
 
