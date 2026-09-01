@@ -60,7 +60,7 @@ Server:          http://192.168.113.1:1234
 Models Endpoint: /v1/models
 Chat Endpoint:   /v1/chat/completions
 Temperature:     0.2
-Timeout:         60000 ms
+Timeout:         300000 ms
 Authentifizierung: Keine
 ```
 

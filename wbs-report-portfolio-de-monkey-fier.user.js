@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.0.0
+// @version       2.0.1
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -39,6 +39,7 @@
     const SCRIPT_NAME = "WBS Berichtsheft de-monkey-fier";
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
+    const AI_SETTINGS_SCHEMA_VERSION = 2;
     const DAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
     const DAY_ALIASES = [
         ["montag", "monday", "mo"], ["dienstag", "tuesday", "di"],
@@ -64,7 +65,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         model: "",
         manualModel: "",
         temperature: 0.2,
-        timeout: 60000,
+        timeout: 300000,
         authType: "none",
         token: ""
     });
@@ -75,6 +76,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
 
     function defaultAiSettings() {
         return {
+            schemaVersion: AI_SETTINGS_SCHEMA_VERSION,
             enabled: true,
             debug: false,
             activeProfileId: DEFAULT_PROFILE.id,
@@ -111,8 +113,14 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     function normalizeAiSettings(rawSettings, rawSecrets = {}) {
         const defaults = defaultAiSettings();
         const source = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
+        const shouldMigrateDefaultTimeout = Number(source.schemaVersion || 1) < AI_SETTINGS_SCHEMA_VERSION;
         const profiles = Array.isArray(source.profiles) && source.profiles.length
-            ? source.profiles.map(normalizeProfile)
+            ? source.profiles.map((profile, index) => normalizeProfile(
+                shouldMigrateDefaultTimeout && Number(profile && profile.timeout) === 60000
+                    ? { ...profile, timeout: DEFAULT_PROFILE.timeout }
+                    : profile,
+                index
+            ))
             : defaults.profiles;
         const secrets = rawSecrets && typeof rawSecrets === "object" ? rawSecrets : {};
         profiles.forEach(profile => {
@@ -122,6 +130,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             ? source.activeProfileId
             : profiles[0].id;
         return {
+            schemaVersion: AI_SETTINGS_SCHEMA_VERSION,
             enabled: source.enabled !== false,
             debug: source.debug === true,
             activeProfileId,
@@ -146,10 +155,12 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     }
 
     function loadAiConfig() {
-        return normalizeAiSettings(
-            safeGetValue(AI_SETTINGS_KEY, defaultAiSettings()),
-            safeGetValue(AI_SECRETS_KEY, {})
-        );
+        const storedSettings = safeGetValue(AI_SETTINGS_KEY, defaultAiSettings());
+        const normalized = normalizeAiSettings(storedSettings, safeGetValue(AI_SECRETS_KEY, {}));
+        if (Number(storedSettings && storedSettings.schemaVersion || 1) < AI_SETTINGS_SCHEMA_VERSION && typeof GM_setValue === "function") {
+            saveAiConfig(normalized);
+        }
+        return normalized;
     }
 
     function saveAiConfig(settings) {

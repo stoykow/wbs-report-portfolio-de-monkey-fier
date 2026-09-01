@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.0.0
+Stand: Version 2.0.1
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -83,6 +83,8 @@ Die Konfiguration trennt globale Einstellungen von Profilen. Mehrere Profile kö
 Normale Einstellungen liegen unter `wbsDeMonkeyFier.ai.settings.v1`. Tokens liegen getrennt unter `wbsDeMonkeyFier.ai.secrets.v1`. Beide Speicher verwenden `GM_getValue` und `GM_setValue`. Der Userscript-Speicher ist bequem, aber kein vollwertiger Passwort-Tresor.
 
 Die Standardkonfiguration verwendet ausschließlich `http://192.168.113.1:1234`. Eine Anfrage erfolgt erst durch „Verbindung testen“, „Modelle neu laden“ oder „Mit KI prüfen“. Bei öffentlichen IP-Adressen oder Hostnamen zeigt die Oberfläche eine Datenschutzwarnung.
+
+Der Standard-Timeout beträgt 300.000 ms beziehungsweise fünf Minuten. Beim Update auf Version 2.0.1 werden Profile mit dem alten Standardwert von 60.000 ms einmalig auf den neuen Wert migriert; andere manuell gewählte Werte bleiben unverändert.
 
 ## KI-Kommunikation und Fehlerbehandlung
 

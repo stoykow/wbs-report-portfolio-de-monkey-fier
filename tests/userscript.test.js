@@ -39,6 +39,7 @@ test("liefert die lokale LM-Studio-Standardkonfiguration", () => {
     assert.equal(settings.profiles[0].baseUrl, "http://192.168.113.1:1234");
     assert.equal(settings.profiles[0].chatEndpoint, "/v1/chat/completions");
     assert.equal(settings.profiles[0].modelsEndpoint, "/v1/models");
+    assert.equal(settings.profiles[0].timeout, 300000);
 });
 
 test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
@@ -48,8 +49,34 @@ test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
     });
     assert.equal(settings.activeProfileId, "test");
     assert.equal(settings.profiles[0].baseUrl, "http://localhost:1234");
-    assert.equal(settings.profiles[0].timeout, 60000);
+    assert.equal(settings.profiles[0].timeout, 300000);
     assert.equal(getActiveAiProfile(settings).id, "test");
+});
+
+test("migriert nur den alten Standard-Timeout einmalig auf fünf Minuten", () => {
+    const oldSettings = normalizeAiSettings({
+        schemaVersion: 1,
+        profiles: [{ id: "alt", name: "Alt", timeout: 60000 }]
+    });
+    assert.equal(oldSettings.schemaVersion, 2);
+    assert.equal(oldSettings.profiles[0].timeout, 300000);
+
+    const currentSettings = normalizeAiSettings({
+        schemaVersion: 2,
+        profiles: [{ id: "bewusst", name: "Bewusst", timeout: 60000 }]
+    });
+    assert.equal(currentSettings.profiles[0].timeout, 60000);
+
+    const storage = new Map([["wbsDeMonkeyFier.ai.settings.v1", {
+        schemaVersion: 1,
+        profiles: [{ id: "gespeichert", name: "Gespeichert", timeout: 60000 }]
+    }]]);
+    global.GM_getValue = (key, fallback) => storage.has(key) ? storage.get(key) : fallback;
+    global.GM_setValue = (key, value) => storage.set(key, value);
+    assert.equal(loadAiConfig().profiles[0].timeout, 300000);
+    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 2);
+    delete global.GM_getValue;
+    delete global.GM_setValue;
 });
 
 test("mischt getrennt gespeicherte Tokens wieder in Profile ein", () => {
