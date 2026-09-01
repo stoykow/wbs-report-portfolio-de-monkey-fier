@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       1.0.0
+// @version       1.1.0
 // @description   Arbeitet eingereichte WBS-Berichtshefte nacheinander mit dem de-monkey-fier ab
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-berichtsheft-serienpruefung.user.js
 // @updateURL     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-berichtsheft-serienpruefung.user.js
@@ -63,7 +63,8 @@
             url: String(item && item.url || ""),
             label: String(item && item.label || `Bericht ${index + 1}`),
             period: String(item && item.period || ""),
-            status: ["pending", "accepted", "returned", "skipped", "failed"].includes(item && item.status) ? item.status : "pending",
+            originalStatus: String(item && item.originalStatus || ""),
+            status: ["pending", "reviewed", "accepted", "returned", "skipped", "failed"].includes(item && item.status) ? item.status : "pending",
             aiStarted: item && item.aiStarted === true,
             aiStatus: ["pending", "running", "ok", "error"].includes(item && item.aiStatus) ? item.aiStatus : "pending",
             action: ["accepted", "returned"].includes(item && item.action) ? item.action : "",
@@ -92,7 +93,7 @@
         if (!normalized) return null;
         const current = getCurrentItem(normalized);
         if (current) {
-            current.status = ["accepted", "returned", "skipped", "failed"].includes(outcome) ? outcome : "skipped";
+            current.status = ["reviewed", "accepted", "returned", "skipped", "failed"].includes(outcome) ? outcome : "skipped";
             current.awaitingSave = false;
         }
         let nextIndex = normalized.index + 1;
@@ -106,6 +107,7 @@
         const count = status => items.filter(item => item.status === status).length;
         return {
             total: items.length,
+            reviewed: count("reviewed"),
             accepted: count("accepted"),
             returned: count("returned"),
             skipped: count("skipped"),
@@ -190,17 +192,17 @@
             row.querySelector("td:last-child li:first-child a[href]");
     }
 
-    function extractSubmittedReportFromRow(row, fallbackIndex = 0) {
+    function extractVisibleReportFromRow(row, fallbackIndex = 0) {
         const cells = [...row.querySelectorAll(":scope > td")];
         if (cells.length < 6) return null;
         const status = normalizeText(cells[4] && cells[4].textContent);
-        if (!isSubmittedStatus(status)) return null;
         const link = findViewLink(row);
         if (!link || !link.href || /^javascript:/i.test(link.href)) return null;
         return {
             url: link.href,
             label: normalizeText(cells[0] && cells[0].textContent) || `Bericht ${fallbackIndex + 1}`,
             period: normalizeText(cells[2] && cells[2].textContent),
+            originalStatus: status,
             status: "pending",
             aiStarted: false,
             aiStatus: "pending",
@@ -209,9 +211,9 @@
         };
     }
 
-    function collectSubmittedReports(root = document) {
+    function collectVisibleReports(root = document) {
         const rows = [...root.querySelectorAll("tbody > tr")];
-        return rows.map((row, index) => extractSubmittedReportFromRow(row, index)).filter(Boolean).slice(0, MAX_VISIBLE_REPORTS);
+        return rows.map((row, index) => extractVisibleReportFromRow(row, index)).filter(Boolean).slice(0, MAX_VISIBLE_REPORTS);
     }
 
     function findSuccessMessage(root = document) {
@@ -225,7 +227,7 @@
         bar.id = "wbs-srq-bar";
         const current = getCurrentItem(queue);
         const position = Math.min(queue.index + 1, queue.items.length);
-        bar.appendChild(createElement("div", { className: "wbs-srq-title", text: `Serienprüfung: ${position} von ${queue.items.length}${current ? ` · ${current.label}${current.period ? ` · ${current.period}` : ""}` : ""}` }));
+        bar.appendChild(createElement("div", { className: "wbs-srq-title", text: `Serienprüfung: ${position} von ${queue.items.length}${current ? ` · ${current.label}${current.period ? ` · ${current.period}` : ""}${current.originalStatus ? ` · Status: ${current.originalStatus}` : ""}` : ""}` }));
         const status = createElement("div", { className: "wbs-srq-status", text: statusText });
         status.id = "wbs-srq-status";
         bar.appendChild(status);
@@ -265,7 +267,7 @@
     function renderListSummary(container) {
         const summary = safeGetValue(SUMMARY_KEY, null);
         if (!summary || typeof summary !== "object") return;
-        const message = `Letzte Serienprüfung: ${summary.total || 0} Berichte · ${summary.accepted || 0} angenommen · ${summary.returned || 0} zurückgegeben · ${summary.skipped || 0} übersprungen · ${summary.failed || 0} fehlgeschlagen.`;
+        const message = `Letzte Serienprüfung: ${summary.total || 0} Berichte · ${summary.reviewed || 0} geprüft · ${summary.accepted || 0} angenommen · ${summary.returned || 0} zurückgegeben · ${summary.skipped || 0} übersprungen · ${summary.failed || 0} fehlgeschlagen.`;
         container.appendChild(createElement("div", { className: "wbs-srq-status", text: message }));
         safeDeleteValue(SUMMARY_KEY);
     }
@@ -276,8 +278,8 @@
         const button = createElement("button", {
             className: "btn btn-default wbs-srq-list-button",
             type: "button",
-            text: `▶ Serienprüfung starten (${reports.length})`,
-            title: "Alle sichtbaren Berichte mit Status „Eingereicht“ nacheinander öffnen"
+            text: `▶ Angezeigte Berichte prüfen (${reports.length})`,
+            title: "Alle aktuell sichtbaren Berichte unabhängig von ihrem Status nacheinander öffnen"
         });
         button.id = "wbs-srq-start";
         button.disabled = reports.length === 0;
@@ -285,7 +287,7 @@
             if (!reports.length) return;
             const activeQueue = loadQueue();
             if (activeQueue && !window.confirm("Es gibt bereits eine laufende Serienprüfung. Soll sie verworfen und durch eine neue Warteschlange ersetzt werden?")) return;
-            if (!window.confirm(`${reports.length} eingereichte Berichte dieser Seite nacheinander prüfen? Annahme und Rückgabe bleiben immer deine Entscheidung.`)) return;
+            if (!window.confirm(`${reports.length} aktuell angezeigte Berichte dieser Seite nacheinander prüfen? Bereits angenommene oder zurückgegebene Berichte werden ebenfalls geöffnet. Annahme und Rückgabe bleiben immer deine Entscheidung.`)) return;
             const queue = saveQueue({
                 version: QUEUE_VERSION,
                 createdAt: new Date().toISOString(),
@@ -318,7 +320,7 @@
     }
 
     function handleListPage() {
-        const reports = collectSubmittedReports();
+        const reports = collectVisibleReports();
         let queue = loadQueue();
         if (queue) {
             const current = getCurrentItem(queue);
@@ -329,7 +331,7 @@
                 if (!getCurrentItem(queue)) {
                     const summary = finishQueue(queue, false);
                     safeDeleteValue(SUMMARY_KEY);
-                    const completed = createQueueBar({ ...queue, index: Math.max(queue.items.length - 1, 0) }, `Abgeschlossen: ${summary.accepted} angenommen, ${summary.returned} zurückgegeben, ${summary.skipped} übersprungen, ${summary.failed} fehlgeschlagen.`);
+                    const completed = createQueueBar({ ...queue, index: Math.max(queue.items.length - 1, 0) }, `Abgeschlossen: ${summary.reviewed} geprüft, ${summary.accepted} angenommen, ${summary.returned} zurückgegeben, ${summary.skipped} übersprungen, ${summary.failed} fehlgeschlagen.`);
                     const close = createElement("button", { className: "wbs-srq-button", type: "button", text: "Schließen" });
                     close.addEventListener("click", () => completed.bar.remove()); completed.actions.appendChild(close);
                 } else {
@@ -465,6 +467,12 @@
         const aiButton = createElement("button", { className: "wbs-srq-button wbs-srq-primary", type: "button", text: current.aiStarted ? "KI erneut prüfen" : "KI-Prüfung starten" });
         aiButton.id = "wbs-srq-ai";
         aiButton.addEventListener("click", () => startAiCheck(queue, ui, true));
+        const reviewed = createElement("button", { className: "wbs-srq-button wbs-srq-primary", type: "button", text: "Geprüft → Nächster Bericht" });
+        reviewed.addEventListener("click", () => {
+            const advanced = advanceQueue(queue, "reviewed");
+            if (getCurrentItem(advanced)) { saveQueue(advanced); goToCurrentReport(advanced); }
+            else finishQueue(advanced, true);
+        });
         const skip = createElement("button", { className: "wbs-srq-button", type: "button", text: "Überspringen" });
         skip.addEventListener("click", () => {
             const advanced = advanceQueue(queue, "skipped");
@@ -475,7 +483,7 @@
         list.addEventListener("click", () => { queue.paused = true; queue.continueOnList = false; saveQueue(queue); location.assign(queue.sourceUrl); });
         const abort = createElement("button", { className: "wbs-srq-button wbs-srq-danger", type: "button", text: "Abbrechen" });
         abort.addEventListener("click", () => abortQueue(queue, true));
-        ui.actions.append(aiButton, skip, list, abort);
+        ui.actions.append(aiButton, reviewed, skip, list, abort);
         if (queue.autoStartAi && !current.aiStarted) void startAiCheck(queue, ui, false);
         else {
             ui.status.textContent = current.aiStatus === "ok" ? "KI-Prüfung wurde erfolgreich verarbeitet."
@@ -493,7 +501,7 @@
 
     const testExports = {
         normalizeText, isSubmittedStatus, isSuccessfulSaveMessage, outcomeFromSuccessMessage, normalizeComparableUrl, isSameReportUrl,
-        normalizeQueue, getCurrentItem, advanceQueue, summarizeQueue, classifyDecisionTarget, extractSubmittedReportFromRow
+        normalizeQueue, getCurrentItem, advanceQueue, summarizeQueue, classifyDecisionTarget, extractVisibleReportFromRow
     };
     if (typeof module !== "undefined" && module.exports) { module.exports = testExports; return; }
     initialize();

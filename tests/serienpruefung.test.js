@@ -15,7 +15,7 @@ const {
     advanceQueue,
     summarizeQueue,
     classifyDecisionTarget,
-    extractSubmittedReportFromRow
+    extractVisibleReportFromRow
 } = require("../wbs-berichtsheft-serienpruefung.user.js");
 
 const userscriptSource = fs.readFileSync(path.join(__dirname, "..", "wbs-berichtsheft-serienpruefung.user.js"), "utf8");
@@ -48,7 +48,7 @@ test("erkennt ausschließlich tatsächlich eingereichte Zeilen", () => {
     assert.equal(isSubmittedStatus("Nicht eingereicht"), false);
 });
 
-test("übernimmt aus einer Tabellenzeile nur einen eingereichten Bericht", () => {
+test("übernimmt alle sichtbaren Berichte unabhängig vom Status", () => {
     const cells = ["Mustermann, Max", "US_FISI", "01. Sep - 07. Sep", "09. Sep", "Eingereicht", "", ""]
         .map(textContent => ({ textContent }));
     const viewLink = { href: "https://ecampus.wbstraining.de/ilias.php?cmd=reportstrainer.viewreport&id=7", textContent: "Anzeigen" };
@@ -56,11 +56,12 @@ test("übernimmt aus einer Tabellenzeile nur einen eingereichten Bericht", () =>
         querySelectorAll: selector => selector === ":scope > td" ? cells : selector === "a[href]" ? [viewLink] : [],
         querySelector: () => null
     };
-    const report = extractSubmittedReportFromRow(row);
+    const report = extractVisibleReportFromRow(row);
     assert.equal(report.label, "Mustermann, Max");
     assert.equal(report.status, "pending");
+    assert.equal(report.originalStatus, "Eingereicht");
     cells[4].textContent = "Angenommen";
-    assert.equal(extractSubmittedReportFromRow(row), null);
+    assert.equal(extractVisibleReportFromRow(row).originalStatus, "Angenommen");
 });
 
 test("erkennt bestätigte WBS-Speichermeldungen", () => {
@@ -90,15 +91,17 @@ test("normalisiert die Warteschlange und begrenzt sie auf 50 Berichte", () => {
     assert.equal(getCurrentItem(queue).label, "Bericht 1");
 });
 
-test("arbeitet Annahme, Rückgabe und Überspringen nacheinander ab", () => {
-    let queue = advanceQueue(makeQueue(3), "accepted");
+test("arbeitet Prüfung, Annahme, Rückgabe und Überspringen nacheinander ab", () => {
+    let queue = advanceQueue(makeQueue(4), "reviewed");
     assert.equal(queue.index, 1);
-    assert.equal(queue.items[0].status, "accepted");
-    queue = advanceQueue(queue, "returned");
+    assert.equal(queue.items[0].status, "reviewed");
+    queue = advanceQueue(queue, "accepted");
     assert.equal(queue.index, 2);
+    queue = advanceQueue(queue, "returned");
+    assert.equal(queue.index, 3);
     queue = advanceQueue(queue, "skipped");
     assert.equal(getCurrentItem(queue), null);
-    assert.deepEqual(summarizeQueue(queue), { total: 3, accepted: 1, returned: 1, skipped: 1, failed: 0 });
+    assert.deepEqual(summarizeQueue(queue), { total: 4, reviewed: 1, accepted: 1, returned: 1, skipped: 1, failed: 0 });
 });
 
 test("erkennt nur die ausdrücklichen WBS-Entscheidungsbuttons", () => {
