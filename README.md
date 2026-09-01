@@ -15,6 +15,19 @@ Die KI ist eine Assistenzfunktion. Sie nimmt keine Berichtshefte an, gibt keine 
 
 Bei einer neuen Version kann das Script in Violentmonkey über „Aktualisieren“ neu geladen werden.
 
+### Optionale Serienprüfung
+
+Für die sequenzielle Bearbeitung der bis zu 50 sichtbaren, eingereichten Berichte gibt es ein separates Begleit-Userscript:
+
+1. Zuerst das Hauptscript wie oben beschrieben installieren und konfigurieren.
+2. [WBS Berichtsheft Serienprüfung installieren](https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-berichtsheft-serienpruefung.user.js).
+3. In der Berichtsübersicht den gewünschten Filter anwenden.
+4. „Serienprüfung starten (X)“ anklicken.
+
+Das Begleitscript nimmt nur sichtbare Zeilen mit dem tatsächlichen Status „Eingereicht“ in die Warteschlange auf. Es öffnet immer nur einen Bericht im selben Tab und startet dort den KI-Assistenten des Hauptscripts. Nach einer von dir ausdrücklich ausgelösten und durch WBS bestätigten Annahme oder Rückgabe öffnet es den nächsten Bericht. „Überspringen“, „Zur Liste“ und „Abbrechen“ bleiben jederzeit verfügbar.
+
+Annahme, Rückgabe, Kommentarübernahme und Formularspeicherung werden niemals eigenständig ausgelöst. Die aktive Warteschlange liegt ausschließlich im lokalen Userscript-Speicher und wird nach Abschluss oder Abbruch entfernt. Das Hauptscript [wbs-report-portfolio-de-monkey-fier.user.js](./wbs-report-portfolio-de-monkey-fier.user.js) bleibt von dieser Erweiterung unabhängig.
+
 ## Bestehende Workflow-Hilfen
 
 ### Berichtsheftübersicht
@@ -51,7 +64,7 @@ Der Assistent kann unter anderem auf folgende Punkte hinweisen:
 - auffällige Abwesenheiten
 - Stundenangaben
 
-Eine KI-Prüfung startet ausschließlich nach einem Klick auf „Mit KI prüfen“.
+Im Hauptscript startet eine KI-Prüfung ausschließlich nach einem Klick auf „Mit KI prüfen“. Wenn das optionale Begleitscript verwendet wird, gilt der ausdrückliche Klick auf „Serienprüfung starten“ für die nacheinander geöffneten Berichte als Startfreigabe; es wird weiterhin immer nur eine KI-Prüfung gleichzeitig ausgeführt.
 
 ## KI-Konfiguration
 
