@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.3.1
+Stand: Version 2.3.2
 
 ## Unterstützte Seiten und Seitenerkennung
 

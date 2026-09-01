@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.3.1
+// @version       2.3.2
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -89,6 +89,8 @@ Melde jede Auffälligkeit nur einmal und ordne sie ausschließlich dem passendst
 suggestedComment enthält ausschließlich konkrete Korrekturen oder notwendige Rückfragen aus formalIssues, contentIssues und hourIssues. Nenne dort nichts, was bereits gut oder korrekt ist, übernimm keine neutralen notes und erzeuge keine allgemeine Zusammenfassung. Sind diese drei Arrays leer, bleibt suggestedComment leer. Ausnahme: Bei den Berichtsnummern 001 bis 005, auch wenn die führenden Nullen noch fehlen, darf suggestedComment zusätzlich genau einen kurzen ermutigenden Satz enthalten. Zähle dabei trotzdem keine positiven Einzelheiten auf.
 
 Samstag und Sonntag dürfen leer bleiben und benötigen keine Tätigkeiten oder Stunden. Beanstande das Wochenende nur, wenn dort tatsächlich Tätigkeiten oder positive Stunden eingetragen sind.
+
+Ein vollständig oder weitgehend leerer Bericht ist trotzdem auswertbar. Melde fehlende oder nicht ausreichende Tätigkeitsbeschreibungen passend unter contentIssues, ohne Inhalte zu erfinden.
 
 Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, formalIssues, contentIssues, hourIssues, notes und suggestedComment. Formale Auffälligkeiten, inhaltliche Auffälligkeiten und Stundenauffälligkeiten müssen in den jeweils passenden Arrays stehen. Einträge dürfen day, type, original, message und suggestion enthalten. Antworte ohne Markdown und ohne zusätzlichen Text außerhalb des JSON-Objekts.`
         );
@@ -991,6 +993,10 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         return aiResult ? String(aiResult.suggestedComment || "").trim() : "";
     }
 
+    function canRunAiEvaluation(reportData) {
+        return Boolean(reportData && Array.isArray(reportData.days) && reportData.days.length);
+    }
+
     function isPrivateOrLocalHost(baseUrl) {
         try {
             const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -1461,8 +1467,8 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             const currentReportData = extractReportData();
             const currentLocalIssues = validateReport(currentReportData, commentPOIs, course);
             renderLocalResults(localResults, currentLocalIssues);
-            if (!currentReportData.days || !currentReportData.days.length || currentLocalIssues.some(issue => issue.type === "empty_report")) {
-                connectionStatus.textContent = "🔴 Das Berichtsheft ist leer oder die WBS-Seitenstruktur wurde verändert.";
+            if (!canRunAiEvaluation(currentReportData)) {
+                connectionStatus.textContent = "🔴 Es wurden technisch keine Berichtsfelder erkannt. Wahrscheinlich wurde die WBS-Seitenstruktur verändert.";
                 return;
             }
             connectionStatus.textContent = "🟡 KI-Prüfung läuft …"; checkButton.disabled = true;
@@ -1572,7 +1578,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         parseModelsResponse, parseLmStudioModelsResponse, normalizeReasoningCapabilities, getAvailableModels, getLmStudioModels, getModelsForProfile, testAiConnection, detectDayIndex, parseHours, parseDateValue,
         normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
         extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getSelectedReasoning, getReasoningRequestParameters, buildAiRequest, extractNativeLmStudioContent, callAi, extractJsonText,
-        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment,
+        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, canRunAiEvaluation,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };
     if (typeof module !== "undefined" && module.exports) { module.exports = testExports; return; }

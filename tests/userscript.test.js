@@ -43,6 +43,7 @@ const {
     renderLocalResults,
     renderAiResults,
     generateSuggestedComment,
+    canRunAiEvaluation,
     isPrivateOrLocalHost,
     displayHost
 } = require("../wbs-report-portfolio-de-monkey-fier.user.js");
@@ -417,6 +418,16 @@ test("findet Abwesenheiten mit positiven Stunden und inkonsistente Summen", () =
 
 test("erkennt ein vollständig leeres Berichtsheft", () => {
     assert.equal(validateReport({ days: [] }).some(issue => issue.type === "empty_report"), true);
+});
+
+test("erlaubt die KI-Auswertung auch bei leeren erkannten Berichtstagen", () => {
+    const emptyButDetected = { days: [
+        { weekday: "Montag", hours: null, entries: [] },
+        { weekday: "Dienstag", hours: null, entries: [] }
+    ] };
+    assert.equal(validateReport(emptyButDetected).some(issue => issue.type === "empty_report"), true);
+    assert.equal(canRunAiEvaluation(emptyButDetected), true);
+    assert.equal(canRunAiEvaluation({ days: [] }), false);
 });
 
 test("baut eine minimierte und ausgabebegrenzte Chat-Completions-Anfrage", () => {
