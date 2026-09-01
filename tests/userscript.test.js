@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
     DEFAULT_SYSTEM_PROMPT,
+    LEGACY_DEFAULT_SYSTEM_PROMPT,
     defaultAiSettings,
     normalizeAiSettings,
     loadAiConfig,
@@ -18,10 +19,15 @@ const {
     detectDayIndex,
     parseHours,
     extractReportData,
+    reportNumberMessage,
     validateReport,
     buildAiRequest,
     callAi,
     parseAiResponse,
+    getAiIssueCount,
+    hasNoAiIssues,
+    renderLocalResults,
+    renderAiResults,
     generateSuggestedComment,
     isPrivateOrLocalHost,
     displayHost
@@ -58,7 +64,7 @@ test("migriert nur den alten Standard-Timeout einmalig auf fünf Minuten", () =>
         schemaVersion: 1,
         profiles: [{ id: "alt", name: "Alt", timeout: 60000 }]
     });
-    assert.equal(oldSettings.schemaVersion, 2);
+    assert.equal(oldSettings.schemaVersion, 3);
     assert.equal(oldSettings.profiles[0].timeout, 300000);
 
     const currentSettings = normalizeAiSettings({
@@ -74,9 +80,19 @@ test("migriert nur den alten Standard-Timeout einmalig auf fünf Minuten", () =>
     global.GM_getValue = (key, fallback) => storage.has(key) ? storage.get(key) : fallback;
     global.GM_setValue = (key, value) => storage.set(key, value);
     assert.equal(loadAiConfig().profiles[0].timeout, 300000);
-    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 2);
+    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 3);
     delete global.GM_getValue;
     delete global.GM_setValue;
+});
+
+test("aktualisiert nur den früheren Standardprompt und erhält eigene Prompts", () => {
+    const migrated = normalizeAiSettings({ schemaVersion: 2, systemPrompt: LEGACY_DEFAULT_SYSTEM_PROMPT, profiles: [defaultAiSettings().profiles[0]] });
+    assert.equal(migrated.systemPrompt, DEFAULT_SYSTEM_PROMPT);
+    assert.notEqual(migrated.systemPrompt, LEGACY_DEFAULT_SYSTEM_PROMPT);
+
+    const customPrompt = "Mein bewusst angepasster Systemprompt mit neuem Schema.";
+    const preserved = normalizeAiSettings({ schemaVersion: 2, systemPrompt: customPrompt, profiles: [defaultAiSettings().profiles[0]] });
+    assert.equal(preserved.systemPrompt, customPrompt);
 });
 
 test("mischt getrennt gespeicherte Tokens wieder in Profile ein", () => {
@@ -206,6 +222,24 @@ test("findet lokale Auffälligkeiten unabhängig von einer KI", () => {
     ["hours_without_entries", "entries_without_hours", "too_short", "unusual_hours", "duplicate", "weekend_entry", "keyword", "invalid_report_number"].forEach(type => assert.equal(types.has(type), true, type));
 });
 
+test("behandelt FPA, Prüfung, Test, Wiederholung und Vorbereitung als neutrale Begriffe", () => {
+    const issues = validateReport({
+        reportNumber: "14",
+        totalHours: 40,
+        days: [
+            { weekday: "Montag", hours: 8, entries: ["FPA: Praktische Angriffsszenarien analysiert und TOMs abgeleitet."] },
+            { weekday: "Dienstag", hours: 8, entries: ["Bausteinprüfung geschrieben und Ergebnisse anschließend besprochen."] },
+            { weekday: "Mittwoch", hours: 8, entries: ["Testsimulation mit mehreren Multiple Choice Fragen durchgeführt."] },
+            { weekday: "Donnerstag", hours: 8, entries: ["Wiederholung der Netzwerkgrundlagen anhand konkreter Übungen."] },
+            { weekday: "Freitag", hours: 8, entries: ["Vorbereitung einer dokumentierten Präsentation zum Datenschutz."] }
+        ]
+    });
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].type, "invalid_report_number");
+    assert.equal(issues[0].message, "Bitte die Berichtsnummer dreistellig als 014 eintragen.");
+    assert.equal(reportNumberMessage("7"), "Bitte die Berichtsnummer dreistellig als 007 eintragen.");
+});
+
 test("findet Abwesenheiten mit positiven Stunden und inkonsistente Summen", () => {
     const issues = validateReport({
         reportNumber: "001",
@@ -239,10 +273,89 @@ test("parst valides JSON und Markdown-Codeblöcke", () => {
     assert.throws(() => parseAiResponse("keine strukturierte Antwort"), /kein gültiges JSON/);
 });
 
+test("priorisiert und normalisiert das neue strukturierte KI-Antwortschema", () => {
+    const parsed = parseAiResponse(JSON.stringify({
+        status: "warning",
+        summary: "Formale Auffälligkeiten im Bericht.",
+        formalIssues: ["Bitte die Berichtsnummer dreistellig als 014 eintragen."],
+        contentIssues: [{ day: "Dienstag", type: "too_generic", original: "Projektarbeit", message: "Die Tätigkeit ist zu allgemein.", suggestion: "Bitte kurz angeben, welche Tätigkeit durchgeführt wurde." }],
+        hourIssues: [{ day: "Freitag", message: "Die Stundenangabe sollte geprüft werden." }],
+        notes: ["FPA wurde nachvollziehbar beschrieben."],
+        issues: [{ day: "Legacy", message: "Dieser Fallback darf nicht zusätzlich erscheinen." }],
+        suggestedComment: "Bitte die Berichtsnummer korrigieren."
+    }));
+    assert.equal(parsed.usesStructuredSchema, true);
+    assert.equal(parsed.formalIssues[0].message, "Bitte die Berichtsnummer dreistellig als 014 eintragen.");
+    assert.equal(parsed.contentIssues[0].day, "Dienstag");
+    assert.equal(parsed.hourIssues.length, 1);
+    assert.equal(parsed.notes.length, 1);
+    assert.equal(parsed.issues.some(issue => issue.day === "Legacy"), false);
+    assert.equal(getAiIssueCount(parsed), 3);
+    assert.equal(hasNoAiIssues(parsed), false);
+});
+
+test("meldet nur bei Status ok und leeren Auffälligkeitsarrays keine Auffälligkeiten", () => {
+    const okay = parseAiResponse('{"status":"ok","formalIssues":[],"contentIssues":[],"hourIssues":[],"notes":["Neutraler Hinweis"],"suggestedComment":""}');
+    assert.equal(getAiIssueCount(okay), 0);
+    assert.equal(hasNoAiIssues(okay), true);
+    assert.equal(okay.summary, "Keine Auffälligkeiten gemeldet.");
+
+    const warning = parseAiResponse('{"status":"warning","summary":"Formale Auffälligkeiten im Bericht.","formalIssues":["Berichtsnummer korrigieren."],"contentIssues":[],"hourIssues":[],"notes":[]}');
+    assert.equal(hasNoAiIssues(warning), false);
+    assert.equal(getAiIssueCount(warning), 1);
+
+    const emptyWarning = parseAiResponse('{"status":"warning","formalIssues":[],"contentIssues":[],"hourIssues":[],"notes":[]}');
+    assert.equal(hasNoAiIssues(emptyWarning), false);
+    assert.equal(emptyWarning.summary.includes("Keine Auffälligkeiten"), false);
+});
+
+test("rendert strukturierte Bereiche widerspruchsfrei und Inhalt nach Wochentag", () => {
+    class FakeElement {
+        constructor(tag) { this.tag = tag; this.children = []; this.textContent = ""; this.className = ""; }
+        appendChild(child) { this.children.push(child); return child; }
+        replaceChildren(...children) { this.children = children; }
+    }
+    global.document = { createElement: tag => new FakeElement(tag) };
+    const container = new FakeElement("div");
+    const result = parseAiResponse(JSON.stringify({
+        status: "warning",
+        summary: "Formale Auffälligkeiten im Bericht.",
+        formalIssues: ["Bitte die Berichtsnummer dreistellig als 014 eintragen."],
+        contentIssues: [
+            { day: "Freitag", type: "missing_information", message: "Freitag ergänzen." },
+            { day: "Dienstag", type: "too_generic", original: "Projektarbeit", message: "Dienstag ergänzen." }
+        ],
+        hourIssues: ["Gesamtstunden prüfen."],
+        notes: ["FPA ist hier nur ein neutraler Hinweis."],
+        suggestedComment: ""
+    }));
+    renderAiResults(container, result);
+    const flattenText = element => [element.textContent, ...element.children.flatMap(child => flattenText(child))].filter(Boolean);
+    const texts = flattenText(container);
+    const combined = texts.join(" | ");
+    assert.equal(combined.includes("Formale Auffälligkeiten"), true);
+    assert.equal(combined.includes("Stunden / UE"), true);
+    assert.equal(combined.includes("Hinweise"), true);
+    assert.equal(combined.includes("KI-Auffälligkeiten: 4"), true);
+    assert.equal(combined.includes("Keine Auffälligkeiten gemeldet."), false);
+    assert.equal(combined.indexOf("Dienstag: Tätigkeit zu allgemein") < combined.indexOf("Freitag: Fehlende Information"), true);
+    assert.equal(container.children[0].className.includes("wbs-dmf-ai-status-warning"), true);
+    const localContainer = new FakeElement("div");
+    renderLocalResults(localContainer, [{ day: "Berichtsnummer", message: "Bitte die Berichtsnummer dreistellig als 014 eintragen.", original: "14" }]);
+    assert.equal(flattenText(localContainer).includes("Lokale Prüfung: 1 Auffälligkeit"), true);
+    const okayContainer = new FakeElement("div");
+    renderAiResults(okayContainer, parseAiResponse('{"status":"ok","formalIssues":[],"contentIssues":[],"hourIssues":[],"notes":[]}'));
+    assert.equal(okayContainer.children[0].className.includes("wbs-dmf-ai-status-ok"), true);
+    const criticalContainer = new FakeElement("div");
+    renderAiResults(criticalContainer, parseAiResponse('{"status":"critical","formalIssues":["Formaler Fehler"],"contentIssues":[],"hourIssues":[],"notes":[]}'));
+    assert.equal(criticalContainer.children[0].className.includes("wbs-dmf-ai-status-critical"), true);
+    delete global.document;
+});
+
 test("verarbeitet eine vollständige Chat-Completions-Antwort", async () => {
     global.GM_xmlhttpRequest = options => options.onload({
         status: 200,
-        responseText: JSON.stringify({ choices: [{ message: { content: '```json\n{"status":"warning","summary":"Hinweis","issues":[],"suggestedComment":"Bitte genauer beschreiben."}\n```' } }] })
+        responseText: JSON.stringify({ choices: [{ message: { content: '```json\n{"status":"warning","summary":"Hinweis","formalIssues":[],"contentIssues":[{"day":"Montag","message":"Bitte genauer beschreiben."}],"hourIssues":[],"notes":[],"suggestedComment":"Bitte genauer beschreiben."}\n```' } }] })
     });
     const profile = { ...defaultAiSettings().profiles[0], model: "synthetic-model" };
     const result = await callAi({ days: [{ weekday: "Montag", hours: 8, entries: ["Server"] }] }, profile, { debug: false, systemPrompt: DEFAULT_SYSTEM_PROMPT });
@@ -258,11 +371,11 @@ test("normalisiert unbekannte Statuswerte ohne abzustürzen", () => {
     assert.equal(parseAiResponse('{"status":"OK","issues":[]}').status, "ok");
 });
 
-test("erzeugt nur aus gelieferten Hinweisen einen Kommentar", () => {
+test("verwendet nur einen ausdrücklich gelieferten Kommentarvorschlag", () => {
     const fromServer = generateSuggestedComment({ suggestedComment: "Dienstag: Bitte genauer.", issues: [] });
     assert.equal(fromServer, "Dienstag: Bitte genauer.");
     const generated = generateSuggestedComment({ suggestedComment: "", issues: [{ day: "Freitag", message: "FPA erläutern.", suggestion: "" }] });
-    assert.equal(generated, "Freitag: FPA erläutern.");
+    assert.equal(generated, "");
 });
 
 test("unterscheidet lokale/private und möglicherweise externe Server", () => {
@@ -283,6 +396,7 @@ test("enthält die benötigten Userscript-Rechte und stabilen WBS-DOM-Verträge"
         'cmd[reportstrainer.saveaccept]',
         'cmd[reportstrainer.savereject]'
     ].forEach(selectorPart => assert.equal(userscriptSource.includes(selectorPart), true, selectorPart));
+    ["formalIssues", "contentIssues", "hourIssues", "notes"].forEach(field => assert.equal(userscriptSource.includes(field), true, field));
 });
 
 (async () => {

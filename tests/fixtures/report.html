@@ -14,7 +14,10 @@
                 : JSON.stringify({ choices: [{ message: { content: JSON.stringify({
                     status: "warning",
                     summary: "Ein synthetischer Hinweis.",
-                    issues: [{ day: "Dienstag", type: "too_generic", original: "Server", message: "Die Tätigkeit ist zu allgemein.", suggestion: "Bitte genauer beschreiben." }],
+                    formalIssues: ["Bitte die Berichtsnummer dreistellig als 034 eintragen."],
+                    contentIssues: [{ day: "Dienstag", type: "too_generic", original: "Server", message: "Die Tätigkeit ist zu allgemein.", suggestion: "Bitte genauer beschreiben." }],
+                    hourIssues: [],
+                    notes: ["Synthetischer neutraler Hinweis."],
                     suggestedComment: "Dienstag: Bitte die Tätigkeit genauer beschreiben."
                 }) } }] });
             setTimeout(() => options.onload({ status: 200, responseText }), 20);

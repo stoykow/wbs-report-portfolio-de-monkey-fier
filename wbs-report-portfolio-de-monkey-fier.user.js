@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.0.1
+// @version       2.0.2
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -31,15 +31,14 @@
     // Strings to look for in the portfolio (partial, case-insensitive):
     const commentPOIs = [
         "krank", "entschuldig", "abwesen", "anwesen", "arzt", "fehl",
-        "attest", "urlaub", "ferien", "feiertag", "fpa", "prüfung",
-        "test", "kontrolle"
+        "attest", "urlaub", "ferien", "feiertag", "kontrolle"
     ];
     ////////////////////////////// END config
 
     const SCRIPT_NAME = "WBS Berichtsheft de-monkey-fier";
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
-    const AI_SETTINGS_SCHEMA_VERSION = 2;
+    const AI_SETTINGS_SCHEMA_VERSION = 3;
     const DAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
     const DAY_ALIASES = [
         ["montag", "monday", "mo"], ["dienstag", "tuesday", "di"],
@@ -47,13 +46,25 @@
         ["freitag", "friday", "fr"], ["samstag", "saturday", "sa"],
         ["sonntag", "sunday", "so"]
     ];
-    const DEFAULT_SYSTEM_PROMPT = `Du unterstützt einen Ausbilder bei der Prüfung von Ausbildungsberichtsheften.
+    const LEGACY_DEFAULT_SYSTEM_PROMPT = `Du unterstützt einen Ausbilder bei der Prüfung von Ausbildungsberichtsheften.
 
 Bewerte ausschließlich die bereitgestellten Inhalte. Erfinde keine Tätigkeiten, Technologien, Inhalte oder Zusammenhänge. Wenn eine Beschreibung nicht konkret genug ist, fordere eine genauere Beschreibung an und kennzeichne Unsicherheit ausdrücklich.
 
 Prüfe insbesondere Konkretheit und Nachvollziehbarkeit der Tätigkeiten und Lerninhalte, reine Schlagwörter, Wiederholungen, Widersprüche, FPA-Einträge, Abwesenheiten, Stundenangaben und sinnvolle Rückfragen.
 
 Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere Hinweise sachlich, kurz und konstruktiv. Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, issues und suggestedComment. Jedes issue darf day, type, original, message und suggestion enthalten.`;
+
+    const DEFAULT_SYSTEM_PROMPT = `Du unterstützt einen Ausbilder bei der Prüfung von Ausbildungsberichtsheften.
+
+Bewerte ausschließlich die bereitgestellten Inhalte. Erfinde keine Tätigkeiten, Technologien, Inhalte oder Zusammenhänge. Wenn eine Beschreibung nicht konkret genug ist, fordere eine genauere Beschreibung an und kennzeichne Unsicherheit ausdrücklich.
+
+Prüfe insbesondere Konkretheit und Nachvollziehbarkeit der Tätigkeiten und Lerninhalte, wirklich unklare reine Schlagwörter, problematische Wiederholungen, Widersprüche, Abwesenheiten, Stundenangaben und sinnvolle Rückfragen.
+
+Die Begriffe FPA, Prüfung, Test, Wiederholung und Vorbereitung sind für sich allein kein Mangel. Beanstande einen Eintrag mit diesen Begriffen nur, wenn die gesamte Beschreibung tatsächlich unklar oder widersprüchlich ist. Folgende Arten von Einträgen gelten als ausreichend konkret und dürfen nicht künstlich um zusätzliche Technologien, Werkzeuge, Methoden oder Ergebnisse erweitert werden: „FPA: Praktische Angriffsszenarien analysiert und TOMs abgeleitet.“, „Bausteinprüfung geschrieben“, „Testsimulation mit mehreren Multiple Choice Fragen.“
+
+Die Berichtsnummer muss dreistellig sein. Melde eine ein- oder zweistellige Berichtsnummer ausschließlich unter formalIssues und nenne die mit führenden Nullen ergänzte Form, beispielsweise 14 als 014.
+
+Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formuliere Hinweise sachlich, kurz und konstruktiv. Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), summary, formalIssues, contentIssues, hourIssues, notes und suggestedComment. Formale Auffälligkeiten, inhaltliche Auffälligkeiten und Stundenauffälligkeiten müssen in den jeweils passenden Arrays stehen. Neutrale Hinweise gehören ausschließlich in notes. Einträge dürfen day, type, original, message und suggestion enthalten.`;
 
     const DEFAULT_PROFILE = Object.freeze({
         id: "lmstudio-main",
@@ -113,7 +124,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     function normalizeAiSettings(rawSettings, rawSecrets = {}) {
         const defaults = defaultAiSettings();
         const source = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
-        const shouldMigrateDefaultTimeout = Number(source.schemaVersion || 1) < AI_SETTINGS_SCHEMA_VERSION;
+        const sourceSchemaVersion = Number(source.schemaVersion || 1);
+        const shouldMigrateDefaultTimeout = sourceSchemaVersion < 2;
         const profiles = Array.isArray(source.profiles) && source.profiles.length
             ? source.profiles.map((profile, index) => normalizeProfile(
                 shouldMigrateDefaultTimeout && Number(profile && profile.timeout) === 60000
@@ -135,7 +147,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             debug: source.debug === true,
             activeProfileId,
             profiles,
-            systemPrompt: typeof source.systemPrompt === "string" && source.systemPrompt.trim()
+            systemPrompt: typeof source.systemPrompt === "string" && source.systemPrompt.trim() && source.systemPrompt !== LEGACY_DEFAULT_SYSTEM_PROMPT
                 ? source.systemPrompt
                 : DEFAULT_SYSTEM_PROMPT
         };
@@ -371,6 +383,12 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return String(text || "").toLocaleLowerCase("de-DE").replace(/[^a-z0-9äöüß]+/g, " ").trim();
     }
 
+    function reportNumberMessage(reportNumber) {
+        const value = String(reportNumber || "").trim();
+        if (/^\d{1,2}$/.test(value)) return `Bitte die Berichtsnummer dreistellig als ${value.padStart(3, "0")} eintragen.`;
+        return "Bitte die Berichtsnummer dreistellig eintragen.";
+    }
+
     function validateReport(report, poiWords = commentPOIs) {
         const source = report && typeof report === "object" ? report : {};
         const issues = [];
@@ -407,7 +425,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
 
         const summedHours = days.reduce((sum, day) => sum + (typeof day.hours === "number" ? day.hours : 0), 0);
         if (typeof source.totalHours === "number" && Math.abs(summedHours - source.totalHours) > 0.001) addIssue("Gesamt", "inconsistent_total", `Die Summe der Tagesstunden (${summedHours}) stimmt nicht mit den Gesamtstunden (${source.totalHours}) überein.`);
-        if (source.reportNumber && !/^\d{3}$/.test(String(source.reportNumber))) addIssue("Berichtsnummer", "invalid_report_number", "Die Berichtsnummer ist nicht dreistellig.", String(source.reportNumber));
+        if (source.reportNumber && !/^\d{3}$/.test(String(source.reportNumber))) addIssue("Berichtsnummer", "invalid_report_number", reportNumberMessage(source.reportNumber), String(source.reportNumber));
         if (!days.length || !days.some(day => (day.entries && day.entries.length) || (typeof day.hours === "number" && day.hours !== 0))) addIssue("Bericht", "empty_report", "Das Berichtsheft enthält keine auswertbaren Tätigkeiten oder Stunden.");
         return issues;
     }
@@ -461,6 +479,33 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         return first >= 0 && last > first ? text.slice(first, last + 1) : text;
     }
 
+    function normalizeAiIssue(issue, defaults = {}) {
+        if (typeof issue === "string") {
+            return { day: defaults.day || "Allgemein", type: defaults.type || "notice", original: "", message: issue, suggestion: "" };
+        }
+        const source = issue && typeof issue === "object" ? issue : {};
+        return {
+            day: String(source.day || source.weekday || defaults.day || "Allgemein"),
+            type: String(source.type || source.title || defaults.type || "notice"),
+            original: String(source.original || source.entry || ""),
+            message: String(source.message || source.text || source.description || source.title || "Hinweis ohne nähere Beschreibung."),
+            suggestion: String(source.suggestion || source.recommendation || source.hint || "")
+        };
+    }
+
+    function getAiIssueCount(result) {
+        if (!result || typeof result !== "object") return 0;
+        if (result.usesStructuredSchema) {
+            return [result.formalIssues, result.contentIssues, result.hourIssues]
+                .reduce((sum, issues) => sum + (Array.isArray(issues) ? issues.length : 0), 0);
+        }
+        return Array.isArray(result.issues) ? result.issues.length : 0;
+    }
+
+    function hasNoAiIssues(result) {
+        return Boolean(result && result.status === "ok" && getAiIssueCount(result) === 0);
+    }
+
     function parseAiResponse(content) {
         let parsed;
         try {
@@ -471,27 +516,37 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Die KI-Antwort hat ein ungültiges Format.");
         const responseStatus = String(parsed.status || "").toLowerCase();
         const status = ["ok", "warning", "critical"].includes(responseStatus) ? responseStatus : "warning";
-        const issues = Array.isArray(parsed.issues) ? parsed.issues.map(issue => ({
-            day: String(issue && issue.day || "Allgemein"), type: String(issue && issue.type || "notice"),
-            original: String(issue && issue.original || ""), message: String(issue && issue.message || "Hinweis ohne nähere Beschreibung."),
-            suggestion: String(issue && issue.suggestion || "")
-        })) : [];
-        return {
+        const structuredKeys = ["formalIssues", "contentIssues", "hourIssues", "notes"];
+        const usesStructuredSchema = structuredKeys.some(key => Object.prototype.hasOwnProperty.call(parsed, key));
+        const normalizeList = (value, defaults) => Array.isArray(value) ? value.map(issue => normalizeAiIssue(issue, defaults)) : [];
+        const formalIssues = usesStructuredSchema ? normalizeList(parsed.formalIssues, { day: "Formal", type: "formal" }) : [];
+        const contentIssues = usesStructuredSchema ? normalizeList(parsed.contentIssues, { day: "Allgemein", type: "content" }) : [];
+        const hourIssues = usesStructuredSchema ? normalizeList(parsed.hourIssues, { day: "Stunden / UE", type: "hours" }) : [];
+        const notes = usesStructuredSchema ? normalizeList(parsed.notes, { day: "Hinweis", type: "note" }) : [];
+        const legacyIssues = usesStructuredSchema ? [] : normalizeList(parsed.issues, { day: "Allgemein", type: "notice" });
+        const issues = usesStructuredSchema ? [...formalIssues, ...contentIssues, ...hourIssues] : legacyIssues;
+        const result = {
             status,
-            summary: String(parsed.summary || (issues.length ? "Die KI hat Hinweise gefunden." : "Keine Auffälligkeiten gemeldet.")),
+            summary: "",
+            usesStructuredSchema,
+            formalIssues,
+            contentIssues,
+            hourIssues,
+            notes,
+            legacyIssues,
             issues,
             suggestedComment: String(parsed.suggestedComment || "")
         };
+        result.summary = String(parsed.summary || (hasNoAiIssues(result)
+            ? "Keine Auffälligkeiten gemeldet."
+            : getAiIssueCount(result)
+                ? "Die KI hat Auffälligkeiten gemeldet."
+                : `KI-Status ${status} ohne strukturierte Auffälligkeiten.`));
+        return result;
     }
 
     function generateSuggestedComment(aiResult) {
-        const suppliedComment = aiResult ? String(aiResult.suggestedComment || "").trim() : "";
-        if (suppliedComment) return suppliedComment;
-        if (!aiResult || !Array.isArray(aiResult.issues)) return "";
-        return aiResult.issues.map(issue => {
-            const message = issue.suggestion || issue.message;
-            return message ? `${issue.day}: ${message}` : "";
-        }).filter(Boolean).join("\n\n");
+        return aiResult ? String(aiResult.suggestedComment || "").trim() : "";
     }
 
     function isPrivateOrLocalHost(baseUrl) {
@@ -543,9 +598,14 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             .wbs-dmf-note { font-size: .92em; color: #555; }
             .wbs-dmf-panel { margin: 16px 0; padding: 15px; border: 1px solid #b9c5d0; border-left: 5px solid #1769aa; border-radius: 5px; background: #f8fbfd; }
             .wbs-dmf-result { margin-top: 12px; }
+            .wbs-dmf-ai-summary { margin: 8px 0; padding: 10px; border-left: 5px solid; background: #fff; }
+            .wbs-dmf-ai-status-ok { border-left-color: #2e7d32; color: #1b5e20; }
+            .wbs-dmf-ai-status-warning { border-left-color: #e2a400; color: #7a5600; }
+            .wbs-dmf-ai-status-critical { border-left-color: #c62828; color: #8e0000; }
             .wbs-dmf-issue { margin: 8px 0; padding: 9px; background: #fff; border-left: 4px solid #e2a400; }
             .wbs-dmf-issue-critical { border-left-color: #c62828; }
             .wbs-dmf-original { margin: 5px 0; padding-left: 8px; border-left: 2px solid #bbb; font-style: italic; }
+            .wbs-dmf-note-list { margin: 8px 0; padding: 9px 9px 9px 28px; background: #eef3f6; border-left: 4px solid #78909c; }
             .wbs-dmf-comment-preview { width: 100%; min-height: 100px; margin-top: 8px; box-sizing: border-box; }
             @media (max-width: 640px) { .wbs-dmf-grid { grid-template-columns: 1fr; } }
         `;
@@ -718,7 +778,8 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
 
     function renderLocalResults(container, issues) {
         container.replaceChildren();
-        container.appendChild(createElement("strong", { text: `Lokale Prüfung: ${issues.length ? `${issues.length} Hinweis(e)` : "keine Auffälligkeiten"}` }));
+        const issueLabel = issues.length === 1 ? "1 Auffälligkeit" : `${issues.length} Auffälligkeiten`;
+        container.appendChild(createElement("strong", { text: `Lokale Prüfung: ${issues.length ? issueLabel : "keine Auffälligkeiten"}` }));
         if (!issues.length) return;
         const list = createElement("ul");
         issues.slice(0, 12).forEach(issue => list.appendChild(createElement("li", { text: `${issue.day}: ${issue.message}${issue.original ? ` („${issue.original}“)` : ""}` })));
@@ -726,19 +787,72 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
         container.appendChild(list);
     }
 
+    function aiIssueTypeLabel(type) {
+        const labels = {
+            too_generic: "Tätigkeit zu allgemein",
+            too_general: "Tätigkeit zu allgemein",
+            missing_information: "Fehlende Information",
+            repetition: "Wiederholung",
+            contradiction: "Widerspruch",
+            hours: "Stundenauffälligkeit",
+            formal: "Formale Auffälligkeit",
+            content: "Inhaltliche Auffälligkeit",
+            notice: "Auffälligkeit"
+        };
+        const value = String(type || "notice");
+        return labels[value.toLowerCase()] || value.replace(/_/g, " ");
+    }
+
+    function renderAiIssueBox(container, issue, status) {
+        const box = createElement("article", { className: `wbs-dmf-issue ${status === "critical" ? "wbs-dmf-issue-critical" : ""}` });
+        box.appendChild(createElement("strong", { text: `${issue.day}: ${aiIssueTypeLabel(issue.type)}` }));
+        if (issue.original) box.appendChild(createElement("div", { className: "wbs-dmf-original", text: `Original: „${issue.original}“` }));
+        box.appendChild(createElement("div", { text: issue.message }));
+        if (issue.suggestion) box.appendChild(createElement("div", { text: `Hinweis: ${issue.suggestion}` }));
+        container.appendChild(box);
+    }
+
     function renderAiResults(container, result) {
         container.replaceChildren();
+        const issueCount = getAiIssueCount(result);
         const statusSymbol = result.status === "ok" ? "✓" : result.status === "critical" ? "⛔" : "⚠";
-        container.appendChild(createElement("h4", { text: `${statusSymbol} ${result.summary}` }));
-        if (!result.issues.length) { container.appendChild(createElement("p", { text: "Keine Auffälligkeiten gemeldet." })); return; }
-        result.issues.forEach(issue => {
-            const box = createElement("article", { className: `wbs-dmf-issue ${result.status === "critical" ? "wbs-dmf-issue-critical" : ""}` });
-            box.appendChild(createElement("strong", { text: `${issue.day} · ${issue.type}` }));
-            if (issue.original) box.appendChild(createElement("div", { className: "wbs-dmf-original", text: `„${issue.original}“` }));
-            box.appendChild(createElement("div", { text: issue.message }));
-            if (issue.suggestion) box.appendChild(createElement("div", { text: `Hinweis: ${issue.suggestion}` }));
-            container.appendChild(box);
-        });
+        const summary = createElement("div", { className: `wbs-dmf-ai-summary wbs-dmf-ai-status-${result.status}` });
+        summary.appendChild(createElement("strong", { text: `${statusSymbol} ${result.summary}` }));
+        summary.appendChild(createElement("div", { text: `KI-Auffälligkeiten: ${issueCount}` }));
+        container.appendChild(summary);
+
+        if (result.usesStructuredSchema) {
+            if (result.formalIssues.length) {
+                container.appendChild(createElement("h4", { text: "Formale Auffälligkeiten" }));
+                const list = createElement("ul");
+                result.formalIssues.forEach(issue => list.appendChild(createElement("li", { text: issue.message })));
+                container.appendChild(list);
+            }
+            if (result.contentIssues.length) {
+                container.appendChild(createElement("h4", { text: "Inhaltliche Auffälligkeiten" }));
+                const sortedContentIssues = [...result.contentIssues].sort((left, right) => {
+                    const findDayIndex = value => DAY_NAMES.findIndex(day => String(value || "").toLocaleLowerCase("de-DE").includes(day.toLocaleLowerCase("de-DE")));
+                    const leftIndex = findDayIndex(left.day);
+                    const rightIndex = findDayIndex(right.day);
+                    return (leftIndex < 0 ? 99 : leftIndex) - (rightIndex < 0 ? 99 : rightIndex);
+                });
+                sortedContentIssues.forEach(issue => renderAiIssueBox(container, issue, result.status));
+            }
+            if (result.hourIssues.length) {
+                container.appendChild(createElement("h4", { text: "Stunden / UE" }));
+                result.hourIssues.forEach(issue => renderAiIssueBox(container, issue, result.status));
+            }
+            if (result.notes.length) {
+                container.appendChild(createElement("h4", { text: "Hinweise" }));
+                const notes = createElement("ul", { className: "wbs-dmf-note-list" });
+                result.notes.forEach(note => notes.appendChild(createElement("li", { text: note.message })));
+                container.appendChild(notes);
+            }
+        } else {
+            result.issues.forEach(issue => renderAiIssueBox(container, issue, result.status));
+        }
+
+        if (hasNoAiIssues(result)) container.appendChild(createElement("p", { text: "Keine Auffälligkeiten gemeldet." }));
     }
 
     function renderAiPanel(commentTextArea, insertionTarget, beforeElement) {
@@ -774,14 +888,19 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
                 return;
             }
             connectionStatus.textContent = "🟡 KI-Prüfung läuft …"; checkButton.disabled = true;
+            lastResult = null; generateButton.disabled = true; applyButton.disabled = true; preview.value = ""; preview.hidden = true;
             try {
-                lastResult = await callAi(currentReportData, profile, settings); connectionStatus.textContent = "🟢 KI-Antwort erfolgreich verarbeitet"; renderAiResults(aiResults, lastResult); generateButton.disabled = false;
-                const suggestion = generateSuggestedComment(lastResult); if (suggestion) { preview.value = suggestion; preview.hidden = false; applyButton.disabled = false; }
+                lastResult = await callAi(currentReportData, profile, settings); connectionStatus.textContent = "🟢 KI-Antwort erfolgreich verarbeitet"; renderAiResults(aiResults, lastResult);
+                const suggestion = generateSuggestedComment(lastResult);
+                if (suggestion) { preview.value = suggestion; preview.hidden = false; generateButton.disabled = false; applyButton.disabled = false; }
             } catch (error) {
                 connectionStatus.textContent = `🔴 ${error.message}`; aiResults.replaceChildren(createElement("p", { text: "Die lokale Prüfung und alle übrigen Funktionen bleiben verfügbar." }));
             } finally { checkButton.disabled = false; }
         });
-        generateButton.addEventListener("click", () => { const suggestion = generateSuggestedComment(lastResult); preview.value = suggestion; preview.hidden = false; applyButton.disabled = !suggestion; });
+        generateButton.addEventListener("click", () => {
+            const suggestion = generateSuggestedComment(lastResult);
+            preview.value = suggestion; preview.hidden = !suggestion; applyButton.disabled = !suggestion;
+        });
         applyButton.addEventListener("click", async () => { try { const applied = await applySuggestedComment(preview.value, commentTextArea); if (applied) connectionStatus.textContent = "Kommentarvorschlag übernommen, aber nicht gespeichert oder abgesendet."; } catch (error) { connectionStatus.textContent = `🔴 ${error.message}`; } });
         settingsButton.addEventListener("click", () => renderAiSettings(() => renderAiPanel(commentTextArea, insertionTarget, beforeElement)));
         if (insertionTarget && beforeElement && beforeElement.parentNode === insertionTarget) insertionTarget.insertBefore(panel, beforeElement);
@@ -837,7 +956,7 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
             });
         });
         const weekNumberInput = document.querySelector('input[aria-label="Berichtsnummer"], #number');
-        if (weekNumberInput && !/^\d{3}$/.test(weekNumberInput.value.trim())) { appendMarker(weekNumberInput, "⚠️", "⚠️ Nicht dreistellig (00X)."); hasWarnings = true; }
+        if (weekNumberInput && !/^\d{3}$/.test(weekNumberInput.value.trim())) { appendMarker(weekNumberInput, "⚠️", `⚠️ ${reportNumberMessage(weekNumberInput.value)}`); hasWarnings = true; }
         let accumulatedHours = 0;
         document.querySelectorAll('input[aria-label="Stunden / UE"]').forEach(input => {
             const number = parseHours(input.value); if (number !== null) accumulatedHours += number;
@@ -880,12 +999,13 @@ Gib keine automatische Annahme-, Ablehnungs- oder Rückgabeempfehlung. Formulier
     }
 
     const testExports = {
-        DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeAiSettings,
+        DEFAULT_SYSTEM_PROMPT, LEGACY_DEFAULT_SYSTEM_PROMPT, cloneDefaultProfile, defaultAiSettings, normalizeProfile, normalizeAiSettings,
         loadAiConfig, saveAiConfig, getAiProfiles, saveAiProfiles, getActiveAiProfile,
         selectedModel, joinUrl, buildAuthHeaders, gmRequest, classifyHttpError,
         parseModelsResponse, getAvailableModels, testAiConnection, detectDayIndex, parseHours,
-        extractReportData, normalizedEntry, validateReport, buildAiRequest, callAi, extractJsonText,
-        parseAiResponse, generateSuggestedComment, isPrivateOrLocalHost, displayHost
+        extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiRequest, callAi, extractJsonText,
+        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment,
+        renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };
     if (typeof module !== "undefined" && module.exports) { module.exports = testExports; return; }
     initialize();

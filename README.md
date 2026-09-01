@@ -33,6 +33,8 @@ Bei einer neuen Version kann das Script in Violentmonkey über „Aktualisieren�
 - Prüfung von Tages- und Gesamtstunden
 - zusätzliche lokale Hinweise zu leeren Arbeitstagen, kurzen oder wiederholten Beschreibungen, Tätigkeiten ohne Stunden, ungewöhnlichen Stunden, Wochenendeinträgen und Abwesenheiten
 
+Die Begriffe `FPA`, `Prüfung`, `Test`, `Wiederholung` und `Vorbereitung` erzeugen für sich allein keine lokale Auffälligkeit.
+
 Alle Prüfungen sind Hinweise und ersetzen keine manuelle Beurteilung.
 
 ## KI-Assistent
@@ -118,13 +120,17 @@ Das Metadata-Feld `@connect *` ist erforderlich, damit bewusst angelegte Profile
 
 ## Strukturierte KI-Antwort
 
-Der Systemprompt fordert ein JSON-Objekt mit `status`, `summary`, `issues` und `suggestedComment`. JSON in Markdown-Codeblöcken wird ebenfalls verarbeitet. Ungültige oder leere Antworten führen nur zu einer Fehlermeldung im KI-Bereich; lokale Prüfungen und der restliche Workflow bleiben funktionsfähig.
+Der Systemprompt fordert ein JSON-Objekt mit `status`, `summary`, `formalIssues`, `contentIssues`, `hourIssues`, `notes` und `suggestedComment`. Formale, inhaltliche und Stundenauffälligkeiten werden getrennt dargestellt. `notes` erscheinen als neutrale Hinweise und werden nicht zur Zahl der KI-Auffälligkeiten addiert. Das frühere Feld `issues` bleibt als Fallback kompatibel.
+
+„Keine Auffälligkeiten gemeldet“ erscheint ausschließlich bei Status `ok`, wenn `formalIssues`, `contentIssues` und `hourIssues` leer sind. JSON in Markdown-Codeblöcken wird ebenfalls verarbeitet. Ungültige oder leere Antworten führen nur zu einer Fehlermeldung im KI-Bereich; lokale Prüfungen und der restliche Workflow bleiben funktionsfähig.
 
 Der Standardprompt verbietet ausdrücklich, fehlende Tätigkeiten oder Zusammenhänge zu erfinden. Bei unklaren Einträgen soll die KI eine genauere Beschreibung anfordern.
 
+Beim Update auf Version 2.0.2 wird nur der unveränderte frühere Standardprompt auf das neue Schema aktualisiert. Eigene oder bereits angepasste Systemprompts bleiben erhalten.
+
 ## Kommentarvorschläge
 
-Der KI-Vorschlag erscheint zunächst in einem bearbeitbaren Vorschaufeld. Erst „Kommentar übernehmen“ schreibt ihn in das vorhandene Kommentarfeld. Wenn dort bereits Text steht, kann zwischen „Anhängen“, „Ersetzen“ und „Abbrechen“ gewählt werden. Das Formular wird dabei nicht gespeichert oder abgesendet.
+Ein nicht leerer KI-Vorschlag erscheint zunächst in einem bearbeitbaren Vorschaufeld. Bei leerem `suggestedComment` erzeugt das Script keinen künstlichen Kommentar. Erst „Kommentar übernehmen“ schreibt einen vorhandenen Vorschlag in das Kommentarfeld. Wenn dort bereits Text steht, kann zwischen „Anhängen“, „Ersetzen“ und „Abbrechen“ gewählt werden. Das Formular wird dabei nicht gespeichert oder abgesendet.
 
 ## Entwicklung und Tests
 

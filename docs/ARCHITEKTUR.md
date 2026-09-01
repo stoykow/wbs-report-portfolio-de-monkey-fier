@@ -1,6 +1,6 @@
 # Technische Architektur
 
-Stand: Version 2.0.1
+Stand: Version 2.0.2
 
 ## Unterstützte Seiten und Seitenerkennung
 
@@ -74,6 +74,8 @@ Die Tageszuordnung verwendet zunächst Feld-ID, Feldname, `aria-label`, zugehör
 - leere Berichte,
 - auffällige Schlagwörter.
 
+`FPA`, `Prüfung`, `Test`, `Wiederholung` und `Vorbereitung` gelten nicht als auffällige Schlagwörter und erzeugen allein weder Zähler noch Warnmarkierung. Ungültige ein- oder zweistellige Berichtsnummern erhalten einen konkret auf drei Stellen aufgefüllten Korrekturhinweis.
+
 Diese Hinweise sind keine Entscheidung über Annahme oder Rückgabe.
 
 ## KI-Konfiguration
@@ -92,7 +94,9 @@ Der Standard-Timeout beträgt 300.000 ms beziehungsweise fünf Minuten. Beim Upd
 
 `testAiConnection()` ruft den Models-Endpunkt auf, prüft HTTP-Status und JSON-Struktur und extrahiert IDs beziehungsweise Namen. Unterstützt werden OpenAI-Listen unter `data`, Listen unter `models` sowie direkte Arrays. Bearer Tokens werden als `Authorization: Bearer …`, API Keys als `X-API-Key` gesendet.
 
-`callAi()` sendet eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
+`callAi()` sendet eine OpenAI-kompatible Chat-Completions-Anfrage. Der zentrale, editierbare Systemprompt verbietet erfundene Inhalte und automatische Entscheidungen. `parseAiResponse()` akzeptiert reines JSON sowie JSON in Markdown-Codeblöcken. Das bevorzugte Schema trennt `formalIssues`, `contentIssues`, `hourIssues` und neutrale `notes`; das frühere Feld `issues` bleibt als Fallback erhalten. Nur die drei Auffälligkeitsarrays fließen in den KI-Zähler ein. Ungültige oder leere Antworten werden als verständlicher Fehler angezeigt; das restliche Userscript läuft weiter.
+
+Die Einstellungsmigration ersetzt ausschließlich den unveränderten früheren Standardprompt. Benutzerdefinierte Systemprompts werden nicht überschrieben.
 
 Der optionale Debug-Modus protokolliert nur technische Ereignisse und Statuscodes. Tokens, Berichtsheftinhalte und personenbezogene Daten werden nicht protokolliert.
 
