@@ -5,9 +5,15 @@
     <title>Synthetisches eCampus-Testformular</title>
     <script>
         const gmStore = new Map();
+        gmStore.set("wbsDeMonkeyFier.ai.secrets.v1", { "lmstudio-main": "synthetic-llm-token" });
         window.GM_getValue = (key, fallback) => gmStore.has(key) ? gmStore.get(key) : fallback;
         window.GM_setValue = (key, value) => gmStore.set(key, value);
         window.GM_xmlhttpRequest = options => {
+            if (options.url.includes("llmfeedback.nik0.de")) {
+                window.lastSyntheticFeedbackRequest = options;
+                setTimeout(() => options.onload({ status: 201, responseText: '{"success":true,"id":"fb_synthetic_browser_test"}' }), 20);
+                return;
+            }
             const isModels = options.method === "GET";
             const responseText = isModels
                 ? JSON.stringify({ data: [{ id: "synthetic-model" }] })
@@ -31,6 +37,10 @@
             <div class="form-group">
                 <label for="number">Berichtsnummer</label>
                 <input id="number" aria-label="Berichtsnummer" value="34">
+            </div>
+            <div class="form-group">
+                <label for="module">Abschnitt/Modul</label>
+                <input id="module" aria-label="Abschnitt/Modul" value="IT-Service-Management">
             </div>
             <div class="form-group">
                 <label for="montag_text_1">Montag Tätigkeit</label>

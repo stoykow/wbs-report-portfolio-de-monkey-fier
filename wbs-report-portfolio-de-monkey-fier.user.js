@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.3.2
+// @version       2.4.0
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -26,6 +26,8 @@
     ////////////////////////////// END config
 
     const SCRIPT_NAME = "WBS Berichtsheft de-monkey-fier";
+    const SCRIPT_VERSION = "2.4.0";
+    const FEEDBACK_ENDPOINT = "https://llmfeedback.nik0.de/api/v1/feedback.php";
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
     const AI_SETTINGS_SCHEMA_VERSION = 5;
@@ -329,12 +331,13 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
                 reject(new Error("GM_xmlhttpRequest ist nicht verfügbar. Bitte die Userscript-Berechtigungen prüfen."));
                 return;
             }
+            const { errorMessage, timeoutMessage, abortMessage, ...requestOptions } = options;
             GM_xmlhttpRequest({
-                ...options,
+                ...requestOptions,
                 onload: response => resolve(response),
-                onerror: () => reject(new Error("Der KI-Server ist nicht erreichbar.")),
-                ontimeout: () => reject(new Error(`Der Browser hat die KI-Anfrage nach ${Math.round(Number(options.timeout || 0) / 60000)} Minuten abgebrochen. Bitte den Timeout erhöhen oder die Modell-/Serverleistung prüfen.`)),
-                onabort: () => reject(new Error("Die Anfrage an den KI-Server wurde abgebrochen."))
+                onerror: () => reject(new Error(errorMessage || "Der KI-Server ist nicht erreichbar.")),
+                ontimeout: () => reject(new Error(timeoutMessage || `Der Browser hat die KI-Anfrage nach ${Math.round(Number(options.timeout || 0) / 60000)} Minuten abgebrochen. Bitte den Timeout erhöhen oder die Modell-/Serverleistung prüfen.`)),
+                onabort: () => reject(new Error(abortMessage || "Die Anfrage an den KI-Server wurde abgebrochen."))
             });
         });
     }
@@ -674,7 +677,16 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         const result = {};
         const reportNumber = String(weekNumberInput && weekNumberInput.value || "").trim();
         const totalHours = parseHours(totalHoursInput && totalHoursInput.value);
+        const moduleField = [...root.querySelectorAll("input, textarea, select")].find(input => {
+            if (input === weekNumberInput || input === totalHoursInput || entryInputs.includes(input) || hourInputs.includes(input)) return false;
+            const label = input.id ? root.querySelector(`label[for="${cssEscape(input.id)}"]`) : null;
+            const descriptor = [input.id, input.name, input.getAttribute && input.getAttribute("aria-label"), label && label.textContent]
+                .filter(Boolean).join(" ").toLocaleLowerCase("de-DE");
+            return /(abschnitt|modul)/i.test(descriptor);
+        });
+        const moduleName = String(moduleField && moduleField.value || "").trim();
         if (reportNumber) result.reportNumber = reportNumber;
+        if (moduleName) result.module = moduleName;
         if (totalHours !== null) result.totalHours = totalHours;
         result.days = days.filter((day, index) => {
             const hasEntries = day.entries.length > 0;
@@ -993,6 +1005,94 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         return aiResult ? String(aiResult.suggestedComment || "").trim() : "";
     }
 
+    async function createClientFingerprint(llmToken) {
+        const token = String(llmToken || "").trim();
+        if (!token) throw new Error("Im aktiven KI-Profil ist kein LLM-Token hinterlegt.");
+        const cryptoApi = typeof globalThis !== "undefined" ? globalThis.crypto : null;
+        if (!cryptoApi || !cryptoApi.subtle) throw new Error("Der Browser unterstützt die sichere Fingerabdruckberechnung nicht.");
+        const bytes = new TextEncoder().encode(`wbs-llm-feedback:v1:${token}`);
+        const digest = await cryptoApi.subtle.digest("SHA-256", bytes);
+        return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    function feedbackAiResult(aiResult) {
+        const source = aiResult && typeof aiResult === "object" ? aiResult : {};
+        return {
+            status: ["ok", "warning", "critical"].includes(source.status) ? source.status : "warning",
+            summary: String(source.summary || ""),
+            formalIssues: Array.isArray(source.formalIssues) ? source.formalIssues : [],
+            contentIssues: Array.isArray(source.contentIssues) ? source.contentIssues : [],
+            hourIssues: Array.isArray(source.hourIssues) ? source.hourIssues : [],
+            notes: Array.isArray(source.notes) ? source.notes : [],
+            suggestedComment: String(source.suggestedComment || ""),
+            ...(source.usesStructuredSchema === false && Array.isArray(source.issues) ? { legacyIssues: source.issues } : {})
+        };
+    }
+
+    function buildFeedbackPayload({ reportData, localIssues, aiResult, profile, clientFingerprint, rating, categories, comment, expectedResult, requestDurationMs = 0 }) {
+        const report = reportData && typeof reportData === "object" ? reportData : {};
+        const days = Array.isArray(report.days) ? report.days : [];
+        return {
+            schemaVersion: 1,
+            createdAt: new Date().toISOString(),
+            scriptVersion: SCRIPT_VERSION,
+            profile: {
+                provider: String(profile && profile.provider || ""),
+                model: selectedModel(profile || {})
+            },
+            report: {
+                reportNumber: String(report.reportNumber || ""),
+                module: String(report.module || ""),
+                period: {
+                    from: String(report.periodStart || ""),
+                    to: String(report.periodEnd || "")
+                },
+                days: days.map(day => ({
+                    day: String(day.weekday || ""),
+                    entries: Array.isArray(day.entries) ? day.entries.map(entry => String(entry)) : [],
+                    hours: typeof day.hours === "number" ? day.hours : null
+                })),
+                totalHours: typeof report.totalHours === "number" ? report.totalHours : null
+            },
+            localEvaluation: {
+                issueCount: Array.isArray(localIssues) ? localIssues.length : 0,
+                issues: Array.isArray(localIssues) ? localIssues : []
+            },
+            aiEvaluation: feedbackAiResult(aiResult),
+            userFeedback: {
+                rating: String(rating || "partly_correct"),
+                categories: Array.isArray(categories) ? categories.map(String) : [],
+                comment: String(comment || "").trim(),
+                expectedResult: String(expectedResult || "").trim()
+            },
+            technical: {
+                clientFingerprint: String(clientFingerprint || ""),
+                requestDurationMs: Math.max(0, Math.round(Number(requestDurationMs) || 0)),
+                httpStatus: 200
+            }
+        };
+    }
+
+    async function sendFeedbackPayload(payload) {
+        const response = await gmRequest({
+            method: "POST",
+            url: FEEDBACK_ENDPOINT,
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+            data: JSON.stringify(payload),
+            timeout: 30000,
+            errorMessage: "Der Feedbackdienst ist nicht erreichbar.",
+            timeoutMessage: "Der Feedbackdienst hat nicht innerhalb von 30 Sekunden geantwortet.",
+            abortMessage: "Die Feedbackübertragung wurde abgebrochen."
+        });
+        let parsed = {};
+        try { parsed = JSON.parse(response.responseText || "{}"); } catch (_error) { /* Fehler wird unten verständlich gemeldet. */ }
+        if (response.status !== 201 || parsed.success !== true) {
+            const detail = parsed && parsed.error ? `: ${parsed.error}` : "";
+            throw new Error(`Feedbackdienst antwortet mit HTTP ${response.status}${detail}`);
+        }
+        return parsed;
+    }
+
     function canRunAiEvaluation(reportData) {
         return Boolean(reportData && Array.isArray(reportData.days) && reportData.days.length);
     }
@@ -1057,6 +1157,9 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             .wbs-dmf-suggestion { margin-top: 3px; color: #555; font-size: .94em; }
             .wbs-dmf-note-list { margin: 8px 0; padding: 9px 9px 9px 28px; background: #eef3f6; border-left: 4px solid #78909c; }
             .wbs-dmf-comment-preview { width: 100%; min-height: 100px; margin-top: 8px; box-sizing: border-box; }
+            .wbs-dmf-feedback-categories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; }
+            .wbs-dmf-feedback-categories label { font-weight: normal; }
+            .wbs-dmf-feedback-preview { width: 100%; min-height: 230px; box-sizing: border-box; padding: 8px; font-family: monospace; font-size: 12px; resize: vertical; }
             @media (max-width: 640px) { .wbs-dmf-grid { grid-template-columns: 1fr; } }
         `;
         (document.head || document.documentElement).appendChild(style);
@@ -1435,6 +1538,91 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         if (hasNoAiIssues(result)) container.appendChild(createElement("p", { text: "Keine Auffälligkeiten gemeldet." }));
     }
 
+    function renderFeedbackDialog(context) {
+        document.querySelector("#wbs-dmf-feedback-backdrop")?.remove();
+        const backdrop = createElement("div", { className: "wbs-dmf-modal-backdrop" });
+        backdrop.id = "wbs-dmf-feedback-backdrop";
+        const modal = createElement("section", { className: "wbs-dmf-modal" });
+        modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true");
+        modal.appendChild(createElement("h2", { text: "Auswertung als Feedback melden" }));
+        modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Übertragen werden nur die unten angezeigten Berichtsdaten, die lokale Prüfung, die KI-Auswertung und deine Bewertung. Teilnehmername, WBS-URL und das echte LLM-Token werden nicht übertragen." }));
+
+        const grid = createElement("div", { className: "wbs-dmf-grid" });
+        const rating = createElement("select"); rating.id = "wbs-dmf-feedback-rating";
+        [["good", "Passt"], ["partly_correct", "Teilweise richtig"], ["poor", "Unpassend"]].forEach(([value, text]) => rating.appendChild(new Option(text, value)));
+        rating.value = "partly_correct";
+        grid.append(labelFor("Gesamtbewertung", rating), rating);
+
+        const categoryLabels = {
+            too_strict: "Zu streng", too_lenient: "Zu nachsichtig", false_positive: "Falsche Auffälligkeit",
+            missed_issue: "Auffälligkeit übersehen", wrong_hours: "Stunden falsch", wrong_formal_issue: "Formales falsch",
+            wrong_content_issue: "Inhaltliches falsch", wrong_summary: "Zusammenfassung falsch", wrong_comment: "Kommentar falsch",
+            extraction_problem: "Daten nicht richtig erkannt", technical_problem: "Technisches Problem", other: "Sonstiges"
+        };
+        const categoryBox = createElement("div", { className: "wbs-dmf-feedback-categories" });
+        Object.entries(categoryLabels).forEach(([value, text]) => {
+            const label = createElement("label");
+            const input = createElement("input", { type: "checkbox", value }); input.name = "wbs-dmf-feedback-category";
+            label.append(input, ` ${text}`); categoryBox.appendChild(label);
+        });
+        grid.append(createElement("span", { text: "Was passt nicht?" }), categoryBox);
+
+        const comment = createElement("textarea"); comment.id = "wbs-dmf-feedback-comment"; comment.placeholder = "Was gefällt dir an der Auswertung nicht?";
+        const expectedResult = createElement("textarea"); expectedResult.id = "wbs-dmf-feedback-expected"; expectedResult.placeholder = "Wie hätte die richtige Auswertung aussehen sollen?";
+        grid.append(labelFor("Deine Einschätzung", comment), comment, labelFor("Erwartetes Ergebnis", expectedResult), expectedResult);
+        modal.appendChild(grid);
+
+        modal.appendChild(createElement("h3", { text: "Übertragungsvorschau" }));
+        const payloadPreview = createElement("textarea", { className: "wbs-dmf-feedback-preview" }); payloadPreview.readOnly = true;
+        modal.appendChild(payloadPreview);
+        const status = createElement("div", { className: "wbs-dmf-status", text: "Anonyme Zuordnung wird vorbereitet …" }); modal.appendChild(status);
+        const actions = createElement("div", { className: "wbs-dmf-actions" });
+        const sendButton = createElement("button", { className: "wbs-dmf-button wbs-dmf-button-primary", type: "button", text: "Feedback senden" }); sendButton.disabled = true;
+        const closeButton = createElement("button", { className: "wbs-dmf-button", type: "button", text: "Abbrechen" });
+        actions.append(sendButton, closeButton); modal.appendChild(actions); backdrop.appendChild(modal); document.body.appendChild(backdrop);
+
+        let clientFingerprint = "";
+        const selectedCategories = () => [...categoryBox.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+        const currentPayload = () => buildFeedbackPayload({
+            ...context,
+            clientFingerprint,
+            rating: rating.value,
+            categories: selectedCategories(),
+            comment: comment.value,
+            expectedResult: expectedResult.value
+        });
+        const updatePreview = () => { payloadPreview.value = JSON.stringify(currentPayload(), null, 2); };
+        [rating, categoryBox, comment, expectedResult].forEach(element => element.addEventListener("input", updatePreview));
+        closeButton.addEventListener("click", () => backdrop.remove());
+        backdrop.addEventListener("click", event => { if (event.target === backdrop) backdrop.remove(); });
+        sendButton.addEventListener("click", async () => {
+            if (!selectedCategories().length) {
+                status.textContent = "Bitte mindestens eine passende Kategorie auswählen.";
+                return;
+            }
+            updatePreview();
+            sendButton.disabled = true; status.textContent = "Feedback wird gesendet …";
+            try {
+                const response = await sendFeedbackPayload(currentPayload());
+                status.textContent = `Feedback gespeichert: ${response.id}`;
+                sendButton.textContent = "Feedback gesendet";
+            } catch (error) {
+                status.textContent = `Feedback konnte nicht gesendet werden: ${error.message}`;
+                sendButton.disabled = false;
+            }
+        });
+
+        void createClientFingerprint(context.profile && context.profile.token).then(fingerprint => {
+            clientFingerprint = fingerprint;
+            updatePreview();
+            status.textContent = "Vorschau bereit. Gesendet wird erst nach deinem Klick.";
+            sendButton.disabled = false;
+        }).catch(error => {
+            status.textContent = error.message;
+            payloadPreview.value = "Ohne hinterlegtes LLM-Token kann keine anonyme Zuordnung erzeugt werden.";
+        });
+    }
+
     function renderAiPanel(commentTextArea, insertionTarget, beforeElement) {
         document.querySelector("#wbs-dmf-ai-panel")?.remove();
         const settings = loadAiConfig(); const profile = getActiveAiProfile(settings); const course = getActiveCourse(settings);
@@ -1458,21 +1646,23 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         const checkButton = createElement("button", { className: "wbs-dmf-button wbs-dmf-button-primary", type: "button", text: "Mit KI prüfen" });
         const generateButton = createElement("button", { className: "wbs-dmf-button", type: "button", text: "Kommentar erzeugen" });
         const applyButton = createElement("button", { className: "wbs-dmf-button", type: "button", text: "Kommentar übernehmen" });
+        const feedbackButton = createElement("button", { className: "wbs-dmf-button", type: "button", text: "Auswertung melden" });
         const settingsButton = createElement("button", { className: "wbs-dmf-button", type: "button", text: "Einstellungen" });
-        generateButton.disabled = true; applyButton.disabled = true; checkButton.disabled = !settings.enabled;
-        [testButton, checkButton, generateButton, applyButton, settingsButton].forEach(button => actions.appendChild(button)); panel.appendChild(actions);
-        let lastResult = null;
+        generateButton.disabled = true; applyButton.disabled = true; feedbackButton.disabled = true; checkButton.disabled = !settings.enabled;
+        [testButton, checkButton, generateButton, applyButton, feedbackButton, settingsButton].forEach(button => actions.appendChild(button)); panel.appendChild(actions);
+        let lastResult = null; let lastReportData = reportData; let lastLocalIssues = localIssues; let lastRequestDurationMs = 0;
         testButton.addEventListener("click", async () => { connectionStatus.textContent = "🟡 Verbindung wird geprüft …"; testButton.disabled = true; const result = await testAiConnection(profile, settings); connectionStatus.textContent = result.message; testButton.disabled = false; });
         checkButton.addEventListener("click", async () => {
             const currentReportData = extractReportData();
             const currentLocalIssues = validateReport(currentReportData, commentPOIs, course);
+            lastReportData = currentReportData; lastLocalIssues = currentLocalIssues;
             renderLocalResults(localResults, currentLocalIssues);
             if (!canRunAiEvaluation(currentReportData)) {
                 connectionStatus.textContent = "🔴 Es wurden technisch keine Berichtsfelder erkannt. Wahrscheinlich wurde die WBS-Seitenstruktur verändert.";
                 return;
             }
             connectionStatus.textContent = "🟡 KI-Prüfung läuft …"; checkButton.disabled = true;
-            lastResult = null; generateButton.disabled = true; applyButton.disabled = true; preview.value = ""; preview.hidden = true;
+            lastResult = null; generateButton.disabled = true; applyButton.disabled = true; feedbackButton.disabled = true; preview.value = ""; preview.hidden = true;
             try {
                 const aiReportData = course && course.startDate ? {
                     ...currentReportData,
@@ -1481,7 +1671,9 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
                         expectedReportNumber: currentReportData.periodStart ? formatExpectedReportNumber(course.startDate, currentReportData.periodStart) : ""
                     }
                 } : currentReportData;
-                lastResult = await callAi(aiReportData, profile, settings); connectionStatus.textContent = "🟢 KI-Antwort erfolgreich verarbeitet"; renderAiResults(aiResults, lastResult);
+                const requestStartedAt = Date.now();
+                lastResult = await callAi(aiReportData, profile, settings); lastRequestDurationMs = Date.now() - requestStartedAt;
+                connectionStatus.textContent = "🟢 KI-Antwort erfolgreich verarbeitet"; renderAiResults(aiResults, lastResult); feedbackButton.disabled = false;
                 const suggestion = generateSuggestedComment(lastResult);
                 if (suggestion) { preview.value = suggestion; preview.hidden = false; generateButton.disabled = false; applyButton.disabled = false; }
             } catch (error) {
@@ -1493,6 +1685,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             preview.value = suggestion; preview.hidden = !suggestion; applyButton.disabled = !suggestion;
         });
         applyButton.addEventListener("click", async () => { try { const applied = await applySuggestedComment(preview.value, commentTextArea); if (applied) connectionStatus.textContent = "Kommentarvorschlag übernommen, aber nicht gespeichert oder abgesendet."; } catch (error) { connectionStatus.textContent = `🔴 ${error.message}`; } });
+        feedbackButton.addEventListener("click", () => renderFeedbackDialog({ reportData: lastReportData, localIssues: lastLocalIssues, aiResult: lastResult, profile, requestDurationMs: lastRequestDurationMs }));
         settingsButton.addEventListener("click", () => renderAiSettings(() => renderAiPanel(commentTextArea, insertionTarget, beforeElement)));
         if (insertionTarget && beforeElement && beforeElement.parentNode === insertionTarget) insertionTarget.insertBefore(panel, beforeElement);
         else if (insertionTarget) insertionTarget.appendChild(panel); else document.body.appendChild(panel);
@@ -1578,7 +1771,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         parseModelsResponse, parseLmStudioModelsResponse, normalizeReasoningCapabilities, getAvailableModels, getLmStudioModels, getModelsForProfile, testAiConnection, detectDayIndex, parseHours, parseDateValue,
         normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
         extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getSelectedReasoning, getReasoningRequestParameters, buildAiRequest, extractNativeLmStudioContent, callAi, extractJsonText,
-        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, canRunAiEvaluation,
+        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, createClientFingerprint, feedbackAiResult, buildFeedbackPayload, sendFeedbackPayload, canRunAiEvaluation,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };
     if (typeof module !== "undefined" && module.exports) { module.exports = testExports; return; }

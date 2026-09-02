@@ -43,6 +43,9 @@ const {
     renderLocalResults,
     renderAiResults,
     generateSuggestedComment,
+    createClientFingerprint,
+    buildFeedbackPayload,
+    sendFeedbackPayload,
     canRunAiEvaluation,
     isPrivateOrLocalHost,
     displayHost
@@ -164,6 +167,51 @@ test("speichert Tokens getrennt von normalen Profileinstellungen", () => {
     delete global.GM_getValue;
 });
 
+test("erzeugt nur einen anonymen Fingerabdruck aus dem vorhandenen LLM-Token", async () => {
+    const fingerprint = await createClientFingerprint("synthetic-llm-token");
+    assert.equal(fingerprint, "15e29794d4a341ce3b5442c5684c781132bbadada0083aeb121384e3ede9e415");
+    assert.equal(fingerprint.includes("synthetic-llm-token"), false);
+    await assert.rejects(() => createClientFingerprint(""), /kein LLM-Token/);
+});
+
+test("baut anonymisierte Feedbackdaten ohne Teilnehmername oder Klartexttoken", () => {
+    const payload = buildFeedbackPayload({
+        reportData: {
+            reportNumber: "014", module: "IT-Service-Management", periodStart: "2026-04-06", periodEnd: "2026-04-12",
+            participantName: "Darf nicht übertragen werden",
+            days: [{ weekday: "Montag", hours: 10, entries: ["ITIL-Inhalte bearbeitet"] }], totalHours: 50
+        },
+        localIssues: [{ day: "Montag", type: "too_short", message: "Zu kurz" }],
+        aiResult: parseAiResponse('{"status":"warning","summary":"Hinweis","formalIssues":[],"contentIssues":[{"day":"Montag","message":"Genauer beschreiben"}],"hourIssues":[],"notes":[],"suggestedComment":"Bitte genauer beschreiben."}'),
+        profile: { provider: "lm-studio", model: "synthetic-model", manualModel: "", token: "sk-darf-nicht-gesendet-werden" },
+        clientFingerprint: "15e29794d4a341ce3b5442c5684c781132bbadada0083aeb121384e3ede9e415",
+        rating: "partly_correct", categories: ["too_strict"], comment: "Zu streng", expectedResult: "Kein Hinweis", requestDurationMs: 1234
+    });
+    const json = JSON.stringify(payload);
+    assert.equal(payload.scriptVersion, "2.4.0");
+    assert.equal(payload.report.module, "IT-Service-Management");
+    assert.equal(payload.technical.clientFingerprint.length, 64);
+    assert.equal(json.includes("Darf nicht übertragen werden"), false);
+    assert.equal(json.includes("sk-darf-nicht-gesendet-werden"), false);
+    assert.equal(payload.localEvaluation.issueCount, 1);
+    assert.equal(payload.aiEvaluation.contentIssues.length, 1);
+});
+
+test("sendet Feedback ohne LLM- oder Feedbacktoken erst über den eigenen Endpunkt", async () => {
+    let request;
+    global.GM_xmlhttpRequest = options => {
+        request = options;
+        options.onload({ status: 201, responseText: '{"success":true,"id":"fb_synthetic"}' });
+    };
+    const response = await sendFeedbackPayload({ synthetic: true });
+    assert.equal(response.id, "fb_synthetic");
+    assert.equal(request.url, "https://llmfeedback.nik0.de/api/v1/feedback.php");
+    assert.equal(request.method, "POST");
+    assert.equal(Object.prototype.hasOwnProperty.call(request.headers, "Authorization"), false);
+    assert.equal(request.headers["Content-Type"], "application/json");
+    delete global.GM_xmlhttpRequest;
+});
+
 test("baut Endpunkt-URLs ohne doppelte Schrägstriche", () => {
     assert.equal(joinUrl("http://localhost:1234/", "/v1/models"), "http://localhost:1234/v1/models");
     assert.throws(() => joinUrl("file:///tmp/model", "/v1/models"), /HTTP und HTTPS/);
@@ -276,16 +324,18 @@ test("extrahiert ausschließlich minimierte Berichtsdaten aus dem DOM-Vertrag", 
         closest: () => ({ textContent: id })
     });
     const number = makeField("number", "number", "034", "Berichtsnummer");
+    const moduleField = makeField("module", "module", "IT-Service-Management", "Abschnitt/Modul");
     const total = makeField("total_hours", "total_hours", "16");
     const hours = [makeField("montag_hours", "montag_hours", "8", "Stunden / UE"), makeField("dienstag_hours", "dienstag_hours", "8", "Stunden / UE")];
     const entries = [makeField("montag_text_1", "montag_text_1", "Testumgebung konfiguriert"), makeField("dienstag_text_1", "dienstag_text_1", "Server")];
     const root = {
         querySelector: selector => selector.includes("Berichtsnummer") ? number : selector === "#total_hours" ? total : null,
-        querySelectorAll: selector => selector.includes("Stunden / UE") ? hours : entries
+        querySelectorAll: selector => selector.includes("Stunden / UE") ? hours : selector === "input, textarea, select" ? [number, moduleField, total, ...hours, ...entries] : entries
     };
     const report = extractReportData(root);
     assert.deepEqual(report, {
         reportNumber: "034",
+        module: "IT-Service-Management",
         totalHours: 16,
         days: [
             { weekday: "Montag", hours: 8, entries: ["Testumgebung konfiguriert"] },

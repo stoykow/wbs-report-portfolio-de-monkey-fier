@@ -2,7 +2,7 @@
 
 Ein Violentmonkey-Userscript für Ausbilderinnen und Ausbilder im WBS eCampus. Es ergänzt den bestehenden Berichtsheft-Workflow um lokale Prüfungen, Kommentarhilfen und einen optionalen KI-Assistenten für OpenAI-kompatible Server.
 
-Die KI ist eine Assistenzfunktion. Sie nimmt keine Berichtshefte an, gibt keine Berichtshefte zurück und speichert oder sendet keine Formulare.
+Die KI ist eine Assistenzfunktion. Sie nimmt keine Berichtshefte an, gibt keine Berichtshefte zurück und sendet keine WBS-Formulare. Eine Auswertung kann ausschließlich nach einem zusätzlichen ausdrücklichen Klick anonymisiert an den eigenen Feedbackdienst gemeldet werden.
 
 ## Installation
 
@@ -104,6 +104,12 @@ Jedes KI-Profil besitzt die Auswahl „Reasoning / Thinking“. Bei LM Studio we
 
 Die KI-Details werden kompakt als Tageszeile mit Original und kurzer Erläuterung beziehungsweise Vorschlag dargestellt. Neutrale Hinweise bleiben separat und werden nicht als Auffälligkeiten gezählt.
 
+### Feedback zu einer Auswertung
+
+Nach einer erfolgreich verarbeiteten KI-Prüfung wird „Auswertung melden“ verfügbar. Der Dialog erfasst eine Gesamtbewertung, mindestens eine Fehlerkategorie, eine freie Einschätzung und das erwartete Ergebnis. Vor dem Senden wird das vollständige JSON angezeigt. Erst „Feedback senden“ überträgt die Vorschau an `https://llmfeedback.nik0.de/api/v1/feedback.php`.
+
+Der Teilnehmername, die WBS-URL und interne WBS-Kennungen werden nicht in den Feedback-Payload übernommen. Das vorhandene LLM-Token wird ausschließlich lokal zu einem SHA-256-Fingerabdruck verarbeitet. Nur dieser nicht rücklesbare Fingerabdruck dient zur Gruppierung zusammengehöriger Rückmeldungen; das echte Token wird weder an den Feedbackdienst gesendet noch dort gespeichert. Beim Wechsel des LLM-Tokens entsteht eine neue anonyme Zuordnung.
+
 ### KI-Profile
 
 Mehrere Serverkonfigurationen werden vollständig unterstützt. Profile können erstellt, ausgewählt, bearbeitet und gelöscht werden, beispielsweise für Büro, Zuhause oder einen Testserver. Das aktive Profil bestimmt Server, Modell und Authentifizierung.
@@ -137,7 +143,7 @@ Aktuell benötigt die vorbereitete LM-Studio-Konfiguration kein Token. Für ande
 - Bearer Token: `Authorization: Bearer <Token>`
 - API Key: `X-API-Key: <Token>`
 
-Tokens gehören niemals in den Quellcode, in Git, in Screenshots oder in Fehlerberichte. Das Script speichert Tokens getrennt von den normalen Profileinstellungen im lokalen Violentmonkey-Speicher. Dieser Speicher ist kein vollwertiger Passwort-Tresor; auf gemeinsam genutzten oder nicht vertrauenswürdigen Browserprofilen sollten keine dauerhaften Tokens hinterlegt werden.
+Tokens gehören niemals in den Quellcode, in Git, in Screenshots oder in Fehlerberichte. Das Script speichert Tokens getrennt von den normalen Profileinstellungen im lokalen Violentmonkey-Speicher. Dieser Speicher ist kein vollwertiger Passwort-Tresor; auf gemeinsam genutzten oder nicht vertrauenswürdigen Browserprofilen sollten keine dauerhaften Tokens hinterlegt werden. Für Feedback wird nur ein lokal berechneter Fingerabdruck verwendet, niemals das Token selbst.
 
 ## Datenschutz und Datenminimierung
 
