@@ -1049,7 +1049,8 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             .sort((left, right) => right.length - left.length);
         const redactText = text => names.reduce((result, name) => {
             const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            return result.replace(new RegExp(escaped, "giu"), "[NAME ENTFERNT]");
+            const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "giu");
+            return result.replace(pattern, (_, prefix) => `${prefix}[NAME ENTFERNT]`);
         }, text);
         if (typeof value === "string") return redactText(value);
         if (Array.isArray(value)) return value.map(item => redactParticipantReferences(item, fullName));

@@ -217,6 +217,7 @@ test("erkennt den Teilnehmernamen aus der Berichtsüberschrift", () => {
     };
     assert.equal(extractParticipantName(root), "Smorodin, Sergey");
     assert.equal(redactParticipantReferences("Notiz für Sergey Smorodin", "Smorodin, Sergey"), "Notiz für [NAME ENTFERNT] [NAME ENTFERNT]");
+    assert.equal(redactParticipantReferences("Ali: Qualität und Validierung", "Ali"), "[NAME ENTFERNT]: Qualität und Validierung");
 });
 
 test("baut automatische Entscheidungsrückmeldungen mit endgültiger Notiz", () => {
