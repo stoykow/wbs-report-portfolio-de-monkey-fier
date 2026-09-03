@@ -110,6 +110,8 @@ Nach einer erfolgreich verarbeiteten KI-Prüfung wird „Auswertung melden“ ve
 
 Der Teilnehmername, die WBS-URL und interne WBS-Kennungen werden nicht in den Feedback-Payload übernommen. Das vorhandene LLM-Token wird ausschließlich lokal zu einem SHA-256-Fingerabdruck verarbeitet. Nur dieser nicht rücklesbare Fingerabdruck dient zur Gruppierung zusammengehöriger Rückmeldungen; das echte Token wird weder an den Feedbackdienst gesendet noch dort gespeichert. Beim Wechsel des LLM-Tokens entsteht eine neue anonyme Zuordnung.
 
+Optional kann in den KI-Einstellungen „Beim Annehmen oder Zurückgeben anonym speichern“ aktiviert werden. Dann werden beim ausdrücklichen WBS-Klick zusätzlich die aktuelle lokale Prüfung, die letzte KI-Auswertung, die endgültige Notiz und die Entscheidung anonym erfasst. Die WBS-Aktion wird dafür nicht blockiert. Schlägt die Übertragung fehl, bleibt der Payload in einer auf 20 Einträge begrenzten lokalen Warteschlange und wird bei einem späteren Seitenaufruf erneut versucht. Diese Funktion ist aus Datenschutzgründen standardmäßig ausgeschaltet.
+
 ### KI-Profile
 
 Mehrere Serverkonfigurationen werden vollständig unterstützt. Profile können erstellt, ausgewählt, bearbeitet und gelöscht werden, beispielsweise für Büro, Zuhause oder einen Testserver. Das aktive Profil bestimmt Server, Modell und Authentifizierung.

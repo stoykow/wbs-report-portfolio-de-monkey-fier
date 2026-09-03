@@ -3,7 +3,7 @@
 // @namespace     https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier
 // @match         *://ecampus.wbstraining.de/*
 // @run-at        document-end
-// @version       2.4.0
+// @version       2.5.0
 // @description   Hilfen und optionale lokale KI-Unterstützung für WBS-Berichtshefte
 // @icon          https://ecampus.wbstraining.de/Customizing/global/skin/wbs718skin/images/HeaderIconResponsive.svg
 // @downloadURL   https://github.com/stoykow/wbs-report-portfolio-de-monkey-fier/raw/refs/heads/master/wbs-report-portfolio-de-monkey-fier.user.js
@@ -26,11 +26,12 @@
     ////////////////////////////// END config
 
     const SCRIPT_NAME = "WBS Berichtsheft de-monkey-fier";
-    const SCRIPT_VERSION = "2.4.0";
+    const SCRIPT_VERSION = "2.5.0";
     const FEEDBACK_ENDPOINT = "https://llmfeedback.nik0.de/api/v1/feedback.php";
+    const FEEDBACK_OUTBOX_KEY = "wbsDeMonkeyFier.feedback.outbox.v1";
     const AI_SETTINGS_KEY = "wbsDeMonkeyFier.ai.settings.v1";
     const AI_SECRETS_KEY = "wbsDeMonkeyFier.ai.secrets.v1";
-    const AI_SETTINGS_SCHEMA_VERSION = 5;
+    const AI_SETTINGS_SCHEMA_VERSION = 6;
     const REASONING_VALUES = ["auto", "off", "on", "low", "medium", "high"];
     const REASONING_LABELS = {
         auto: "Automatisch",
@@ -130,6 +131,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             schemaVersion: AI_SETTINGS_SCHEMA_VERSION,
             enabled: true,
             debug: false,
+            automaticDecisionFeedback: false,
             activeProfileId: DEFAULT_PROFILE.id,
             profiles: [cloneDefaultProfile()],
             activeCourseId: "",
@@ -228,6 +230,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             schemaVersion: AI_SETTINGS_SCHEMA_VERSION,
             enabled: source.enabled !== false,
             debug: source.debug === true,
+            automaticDecisionFeedback: source.automaticDecisionFeedback === true,
             activeProfileId,
             profiles,
             activeCourseId,
@@ -1035,6 +1038,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         return {
             schemaVersion: 1,
             createdAt: new Date().toISOString(),
+            captureMode: "manual",
             scriptVersion: SCRIPT_VERSION,
             profile: {
                 provider: String(profile && profile.provider || ""),
@@ -1091,6 +1095,58 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             throw new Error(`Feedbackdienst antwortet mit HTTP ${response.status}${detail}`);
         }
         return parsed;
+    }
+
+    function loadFeedbackOutbox() {
+        const stored = safeGetValue(FEEDBACK_OUTBOX_KEY, []);
+        return Array.isArray(stored) ? stored.filter(item => item && typeof item === "object").slice(-20) : [];
+    }
+
+    function queueFeedbackPayload(payload) {
+        const outbox = loadFeedbackOutbox();
+        outbox.push(payload);
+        safeSetValue(FEEDBACK_OUTBOX_KEY, outbox.slice(-20));
+    }
+
+    let feedbackOutboxFlushPromise = null;
+    function flushFeedbackOutbox() {
+        if (feedbackOutboxFlushPromise) return feedbackOutboxFlushPromise;
+        feedbackOutboxFlushPromise = (async () => {
+            let outbox = loadFeedbackOutbox();
+            while (outbox.length) {
+                try {
+                    await sendFeedbackPayload(outbox[0]);
+                    outbox = outbox.slice(1);
+                    safeSetValue(FEEDBACK_OUTBOX_KEY, outbox);
+                } catch (_error) {
+                    break;
+                }
+            }
+        })().finally(() => { feedbackOutboxFlushPromise = null; });
+        return feedbackOutboxFlushPromise;
+    }
+
+    function buildDecisionFeedbackPayload({ decision, finalComment, reportData, localIssues, aiResult, profile, clientFingerprint, requestDurationMs }) {
+        const normalizedDecision = decision === "accepted" ? "accepted" : "returned";
+        const comment = String(finalComment || "").trim();
+        const payload = buildFeedbackPayload({
+            reportData,
+            localIssues,
+            aiResult,
+            profile,
+            clientFingerprint,
+            rating: normalizedDecision === "accepted" ? "good" : "poor",
+            categories: aiResult ? ["other"] : ["technical_problem"],
+            comment,
+            expectedResult: comment,
+            requestDurationMs
+        });
+        payload.captureMode = "decision";
+        payload.review = {
+            decision: normalizedDecision,
+            finalComment: comment
+        };
+        return payload;
     }
 
     function canRunAiEvaluation(reportData) {
@@ -1193,6 +1249,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         const grid = createElement("div", { className: "wbs-dmf-grid" });
         const enabled = makeInput("wbs-ai-enabled", "", "checkbox"); enabled.checked = settings.enabled;
         const debug = makeInput("wbs-ai-debug", "", "checkbox"); debug.checked = settings.debug;
+        const automaticDecisionFeedback = makeInput("wbs-ai-auto-feedback", "", "checkbox"); automaticDecisionFeedback.checked = settings.automaticDecisionFeedback;
         const profileSelect = createElement("select"); profileSelect.id = "wbs-ai-profile";
         const name = makeInput("wbs-ai-name", "");
         const provider = createElement("select"); provider.id = "wbs-ai-provider";
@@ -1214,7 +1271,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         const token = makeInput("wbs-ai-token", "", "password"); token.autocomplete = "off";
         const prompt = createElement("textarea"); prompt.id = "wbs-ai-system-prompt"; prompt.value = settings.systemPrompt;
         [
-            ["KI-Unterstützung aktivieren", enabled], ["Debug-Modus", debug], ["KI-Profil", profileSelect],
+            ["KI-Unterstützung aktivieren", enabled], ["Debug-Modus", debug], ["Beim Annehmen oder Zurückgeben anonym speichern", automaticDecisionFeedback], ["KI-Profil", profileSelect],
             ["Profilname", name], ["Anbieter", provider], ["KI-Server", baseUrl], ["Chat Endpoint", chatEndpoint],
             ["Models Endpoint", modelsEndpoint], ["Modell", modelSelect], ["Modellname manuell eingeben", manualModel],
             ["Temperature", temperature], ["Max. Ausgabetokens", maxTokens], ["Reasoning / Thinking", reasoningSelect], ["Timeout (ms)", timeout], ["Authentifizierung verwenden", authEnabled], ["Authentifizierungstyp", authType],
@@ -1241,7 +1298,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         const holidayYearRow = createElement("div", { className: "wbs-dmf-grid" });
         holidayYearRow.append(labelFor("Jahr", holidayYear), holidayYear); modal.appendChild(holidayYearRow);
         const holidayList = createElement("ul", { className: "wbs-dmf-note-list" }); modal.appendChild(holidayList);
-        modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Tokens werden getrennt im lokalen Userscript-Speicher abgelegt. Dieser Speicher ist kein vollwertiger Passwort-Tresor. Berichtsheftinhalte werden nicht gespeichert." }));
+        modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: "Tokens werden getrennt im lokalen Userscript-Speicher abgelegt. Dieser Speicher ist kein vollwertiger Passwort-Tresor. Bei aktivierter automatischer Feedbackspeicherung werden die angezeigten anonymisierten Berichtsinhalte, Prüfergebnisse, deine Notiz und die Entscheidung an den eigenen Feedbackdienst übertragen." }));
         modal.appendChild(createElement("p", { className: "wbs-dmf-note", text: settings.systemPrompt === DEFAULT_SYSTEM_PROMPT
             ? "Aktiv ist der eingebaute Standardprompt."
             : "Aktiv ist dein eigener gespeicherter Systemprompt. Script-Updates überschreiben ihn nicht; nur „Standardprompt wiederherstellen“ ersetzt ihn bewusst." }));
@@ -1416,7 +1473,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         saveButton.addEventListener("click", () => {
             try {
                 persistVisibleProfile(); persistVisibleCourse(); settings = saveAiConfig({
-                    enabled: enabled.checked, debug: debug.checked, activeProfileId: activeId, profiles: workingProfiles,
+                    enabled: enabled.checked, debug: debug.checked, automaticDecisionFeedback: automaticDecisionFeedback.checked, activeProfileId: activeId, profiles: workingProfiles,
                     activeCourseId, courses: workingCourses, systemPrompt: prompt.value
                 });
                 backdrop.remove(); if (typeof onSaved === "function") onSaved(settings);
@@ -1651,6 +1708,12 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         generateButton.disabled = true; applyButton.disabled = true; feedbackButton.disabled = true; checkButton.disabled = !settings.enabled;
         [testButton, checkButton, generateButton, applyButton, feedbackButton, settingsButton].forEach(button => actions.appendChild(button)); panel.appendChild(actions);
         let lastResult = null; let lastReportData = reportData; let lastLocalIssues = localIssues; let lastRequestDurationMs = 0;
+        let decisionClientFingerprint = "";
+        if (settings.automaticDecisionFeedback) {
+            void createClientFingerprint(profile.token).then(fingerprint => { decisionClientFingerprint = fingerprint; }).catch(error => {
+                debugLog(settings, "Automatic feedback fingerprint unavailable", { message: error.message });
+            });
+        }
         testButton.addEventListener("click", async () => { connectionStatus.textContent = "🟡 Verbindung wird geprüft …"; testButton.disabled = true; const result = await testAiConnection(profile, settings); connectionStatus.textContent = result.message; testButton.disabled = false; });
         checkButton.addEventListener("click", async () => {
             const currentReportData = extractReportData();
@@ -1686,6 +1749,31 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         });
         applyButton.addEventListener("click", async () => { try { const applied = await applySuggestedComment(preview.value, commentTextArea); if (applied) connectionStatus.textContent = "Kommentarvorschlag übernommen, aber nicht gespeichert oder abgesendet."; } catch (error) { connectionStatus.textContent = `🔴 ${error.message}`; } });
         feedbackButton.addEventListener("click", () => renderFeedbackDialog({ reportData: lastReportData, localIssues: lastLocalIssues, aiResult: lastResult, profile, requestDurationMs: lastRequestDurationMs }));
+        const decisionButtons = [
+            ...[...document.querySelectorAll('input[name="cmd[reportstrainer.saveaccept]"]')].map(button => ({ button, decision: "accepted" })),
+            ...[...document.querySelectorAll('input[name="cmd[reportstrainer.savereject]"]')].map(button => ({ button, decision: "returned" }))
+        ];
+        decisionButtons.forEach(({ button, decision }) => button.addEventListener("click", () => {
+            if (!settings.automaticDecisionFeedback || !decisionClientFingerprint) return;
+            try {
+                const currentReportData = extractReportData();
+                const currentLocalIssues = validateReport(currentReportData, commentPOIs, course);
+                const payload = buildDecisionFeedbackPayload({
+                    decision,
+                    finalComment: commentTextArea && commentTextArea.value,
+                    reportData: currentReportData,
+                    localIssues: currentLocalIssues,
+                    aiResult: lastResult,
+                    profile,
+                    clientFingerprint: decisionClientFingerprint,
+                    requestDurationMs: lastRequestDurationMs
+                });
+                queueFeedbackPayload(payload);
+                void flushFeedbackOutbox();
+            } catch (error) {
+                debugLog(settings, "Automatic decision feedback could not be queued", { message: error.message });
+            }
+        }, { capture: true }));
         settingsButton.addEventListener("click", () => renderAiSettings(() => renderAiPanel(commentTextArea, insertionTarget, beforeElement)));
         if (insertionTarget && beforeElement && beforeElement.parentNode === insertionTarget) insertionTarget.insertBefore(panel, beforeElement);
         else if (insertionTarget) insertionTarget.appendChild(panel); else document.body.appendChild(panel);
@@ -1757,6 +1845,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
 
     function initialize() {
         injectStyles();
+        void flushFeedbackOutbox();
         const params = new URLSearchParams(location.search);
         const isParamPath = value => params.get("cmd") === value || params.get("fallbackCmd") === value;
         if (isParamPath("reportstrainer.list")) enhanceReportListPage();
@@ -1771,7 +1860,8 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         parseModelsResponse, parseLmStudioModelsResponse, normalizeReasoningCapabilities, getAvailableModels, getLmStudioModels, getModelsForProfile, testAiConnection, detectDayIndex, parseHours, parseDateValue,
         normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
         extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getSelectedReasoning, getReasoningRequestParameters, buildAiRequest, extractNativeLmStudioContent, callAi, extractJsonText,
-        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, createClientFingerprint, feedbackAiResult, buildFeedbackPayload, sendFeedbackPayload, canRunAiEvaluation,
+        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, createClientFingerprint, feedbackAiResult, buildFeedbackPayload, buildDecisionFeedbackPayload,
+        loadFeedbackOutbox, queueFeedbackPayload, flushFeedbackOutbox, sendFeedbackPayload, canRunAiEvaluation,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };
     if (typeof module !== "undefined" && module.exports) { module.exports = testExports; return; }

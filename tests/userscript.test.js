@@ -45,6 +45,10 @@ const {
     generateSuggestedComment,
     createClientFingerprint,
     buildFeedbackPayload,
+    buildDecisionFeedbackPayload,
+    loadFeedbackOutbox,
+    queueFeedbackPayload,
+    flushFeedbackOutbox,
     sendFeedbackPayload,
     canRunAiEvaluation,
     isPrivateOrLocalHost,
@@ -67,6 +71,7 @@ test("liefert die LM-Studio-Gateway-Standardkonfiguration ohne eingebettetes Tok
     assert.equal(settings.profiles[0].maxTokens, 500);
     assert.equal(settings.profiles[0].authType, "bearer");
     assert.equal(settings.profiles[0].token, "");
+    assert.equal(settings.automaticDecisionFeedback, false);
 });
 
 test("fordert im Standardprompt ein ausgeschriebenes Modul und direkte Du-Ansprache", () => {
@@ -89,6 +94,7 @@ test("normalisiert Profile und setzt ein gültiges aktives Profil", () => {
     assert.equal(settings.profiles[0].baseUrl, "http://localhost:1234");
     assert.equal(settings.profiles[0].timeout, 900000);
     assert.equal(getActiveAiProfile(settings).id, "test");
+    assert.equal(normalizeAiSettings({ automaticDecisionFeedback: true }).automaticDecisionFeedback, true);
 });
 
 test("normalisiert fehlende oder ungültige Reasoning-Werte auf Automatisch", () => {
@@ -105,7 +111,7 @@ test("migriert frühere Standard-Timeouts einmalig auf fünfzehn Minuten", () =>
         schemaVersion: 1,
         profiles: [{ id: "alt", name: "Alt", timeout: 60000 }]
     });
-    assert.equal(oldSettings.schemaVersion, 5);
+    assert.equal(oldSettings.schemaVersion, 6);
     assert.equal(oldSettings.profiles[0].timeout, 900000);
 
     const currentSettings = normalizeAiSettings({
@@ -127,7 +133,7 @@ test("migriert frühere Standard-Timeouts einmalig auf fünfzehn Minuten", () =>
     global.GM_getValue = (key, fallback) => storage.has(key) ? storage.get(key) : fallback;
     global.GM_setValue = (key, value) => storage.set(key, value);
     assert.equal(loadAiConfig().profiles[0].timeout, 900000);
-    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 5);
+    assert.equal(storage.get("wbsDeMonkeyFier.ai.settings.v1").schemaVersion, 6);
     delete global.GM_getValue;
     delete global.GM_setValue;
 });
@@ -188,13 +194,46 @@ test("baut anonymisierte Feedbackdaten ohne Teilnehmername oder Klartexttoken", 
         rating: "partly_correct", categories: ["too_strict"], comment: "Zu streng", expectedResult: "Kein Hinweis", requestDurationMs: 1234
     });
     const json = JSON.stringify(payload);
-    assert.equal(payload.scriptVersion, "2.4.0");
+    assert.equal(payload.scriptVersion, "2.5.0");
+    assert.equal(payload.captureMode, "manual");
     assert.equal(payload.report.module, "IT-Service-Management");
     assert.equal(payload.technical.clientFingerprint.length, 64);
     assert.equal(json.includes("Darf nicht übertragen werden"), false);
     assert.equal(json.includes("sk-darf-nicht-gesendet-werden"), false);
     assert.equal(payload.localEvaluation.issueCount, 1);
     assert.equal(payload.aiEvaluation.contentIssues.length, 1);
+});
+
+test("baut automatische Entscheidungsrückmeldungen mit endgültiger Notiz", () => {
+    const payload = buildDecisionFeedbackPayload({
+        decision: "returned",
+        finalComment: "Bitte korrigiere die Stundenangaben.",
+        reportData: { reportNumber: "014", days: [], totalHours: 50 },
+        localIssues: [],
+        aiResult: { status: "warning", summary: "Stunden prüfen", formalIssues: [], contentIssues: [], hourIssues: [], notes: [], suggestedComment: "Stunden prüfen." },
+        profile: { provider: "lm-studio", model: "synthetic-model", token: "wird-nicht-übernommen" },
+        clientFingerprint: "15e29794d4a341ce3b5442c5684c781132bbadada0083aeb121384e3ede9e415",
+        requestDurationMs: 50
+    });
+    assert.equal(payload.captureMode, "decision");
+    assert.equal(payload.review.decision, "returned");
+    assert.equal(payload.review.finalComment, "Bitte korrigiere die Stundenangaben.");
+    assert.equal(payload.userFeedback.rating, "poor");
+    assert.equal(JSON.stringify(payload).includes("wird-nicht-übernommen"), false);
+});
+
+test("bewahrt fehlgeschlagene Feedbacks lokal auf und entfernt sie nach erfolgreichem Versand", async () => {
+    const storage = new Map();
+    global.GM_getValue = (key, fallback) => storage.has(key) ? storage.get(key) : fallback;
+    global.GM_setValue = (key, value) => storage.set(key, value);
+    queueFeedbackPayload({ synthetic: "queued" });
+    assert.equal(loadFeedbackOutbox().length, 1);
+    global.GM_xmlhttpRequest = options => options.onload({ status: 201, responseText: '{"success":true,"id":"fb_queued"}' });
+    await flushFeedbackOutbox();
+    assert.equal(loadFeedbackOutbox().length, 0);
+    delete global.GM_getValue;
+    delete global.GM_setValue;
+    delete global.GM_xmlhttpRequest;
 });
 
 test("sendet Feedback ohne LLM- oder Feedbacktoken erst über den eigenen Endpunkt", async () => {
