@@ -1032,10 +1032,35 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         };
     }
 
-    function buildFeedbackPayload({ reportData, localIssues, aiResult, profile, clientFingerprint, rating, categories, comment, expectedResult, requestDurationMs = 0 }) {
+    function extractParticipantName(root = document) {
+        const texts = [...root.querySelectorAll("h1, h2, h3, .ilHeaderTitle, .ilHeader")].map(element => String(element.textContent || "").trim());
+        if (root.title) texts.push(String(root.title));
+        for (const text of texts) {
+            const match = /\bBericht\s+(.+?)\s+-\s+\d{1,2}[.]/i.exec(text);
+            if (match && match[1].trim()) return match[1].trim();
+        }
+        return "";
+    }
+
+    function redactParticipantReferences(value, participantName) {
+        const fullName = String(participantName || "").trim();
+        if (!fullName) return value;
+        const names = [...new Set([fullName, ...fullName.split(/[\s,]+/)].map(name => name.trim()).filter(name => name.length >= 3))]
+            .sort((left, right) => right.length - left.length);
+        const redactText = text => names.reduce((result, name) => {
+            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            return result.replace(new RegExp(escaped, "giu"), "[NAME ENTFERNT]");
+        }, text);
+        if (typeof value === "string") return redactText(value);
+        if (Array.isArray(value)) return value.map(item => redactParticipantReferences(item, fullName));
+        if (!value || typeof value !== "object") return value;
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactParticipantReferences(item, fullName)]));
+    }
+
+    function buildFeedbackPayload({ reportData, localIssues, aiResult, profile, clientFingerprint, participantName = "", rating, categories, comment, expectedResult, requestDurationMs = 0 }) {
         const report = reportData && typeof reportData === "object" ? reportData : {};
         const days = Array.isArray(report.days) ? report.days : [];
-        return {
+        const payload = {
             schemaVersion: 1,
             createdAt: new Date().toISOString(),
             captureMode: "manual",
@@ -1075,6 +1100,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
                 httpStatus: 200
             }
         };
+        return redactParticipantReferences(payload, participantName);
     }
 
     async function sendFeedbackPayload(payload) {
@@ -1126,7 +1152,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         return feedbackOutboxFlushPromise;
     }
 
-    function buildDecisionFeedbackPayload({ decision, finalComment, reportData, localIssues, aiResult, profile, clientFingerprint, requestDurationMs }) {
+    function buildDecisionFeedbackPayload({ decision, finalComment, reportData, localIssues, aiResult, profile, clientFingerprint, participantName = "", requestDurationMs }) {
         const normalizedDecision = decision === "accepted" ? "accepted" : "returned";
         const comment = String(finalComment || "").trim();
         const payload = buildFeedbackPayload({
@@ -1135,6 +1161,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             aiResult,
             profile,
             clientFingerprint,
+            participantName,
             rating: normalizedDecision === "accepted" ? "good" : "poor",
             categories: aiResult ? ["other"] : ["technical_problem"],
             comment,
@@ -1748,7 +1775,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
             preview.value = suggestion; preview.hidden = !suggestion; applyButton.disabled = !suggestion;
         });
         applyButton.addEventListener("click", async () => { try { const applied = await applySuggestedComment(preview.value, commentTextArea); if (applied) connectionStatus.textContent = "Kommentarvorschlag übernommen, aber nicht gespeichert oder abgesendet."; } catch (error) { connectionStatus.textContent = `🔴 ${error.message}`; } });
-        feedbackButton.addEventListener("click", () => renderFeedbackDialog({ reportData: lastReportData, localIssues: lastLocalIssues, aiResult: lastResult, profile, requestDurationMs: lastRequestDurationMs }));
+        feedbackButton.addEventListener("click", () => renderFeedbackDialog({ reportData: lastReportData, localIssues: lastLocalIssues, aiResult: lastResult, profile, participantName: extractParticipantName(), requestDurationMs: lastRequestDurationMs }));
         const decisionButtons = [
             ...[...document.querySelectorAll('input[name="cmd[reportstrainer.saveaccept]"]')].map(button => ({ button, decision: "accepted" })),
             ...[...document.querySelectorAll('input[name="cmd[reportstrainer.savereject]"]')].map(button => ({ button, decision: "returned" }))
@@ -1766,6 +1793,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
                     aiResult: lastResult,
                     profile,
                     clientFingerprint: decisionClientFingerprint,
+                    participantName: extractParticipantName(),
                     requestDurationMs: lastRequestDurationMs
                 });
                 queueFeedbackPayload(payload);
@@ -1860,7 +1888,7 @@ Liefere ausschließlich ein JSON-Objekt mit status (ok, warning oder critical), 
         parseModelsResponse, parseLmStudioModelsResponse, normalizeReasoningCapabilities, getAvailableModels, getLmStudioModels, getModelsForProfile, testAiConnection, detectDayIndex, parseHours, parseDateValue,
         normalizeDateValue, calculateCourseWeek, formatExpectedReportNumber, getGermanHolidays, getHolidaysInRange, extractReportPeriod,
         extractReportData, normalizedEntry, reportNumberMessage, validateReport, buildAiSystemPrompt, getSelectedReasoning, getReasoningRequestParameters, buildAiRequest, extractNativeLmStudioContent, callAi, extractJsonText,
-        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, createClientFingerprint, feedbackAiResult, buildFeedbackPayload, buildDecisionFeedbackPayload,
+        normalizeAiIssue, getAiIssueCount, hasNoAiIssues, parseAiResponse, generateSuggestedComment, createClientFingerprint, feedbackAiResult, extractParticipantName, redactParticipantReferences, buildFeedbackPayload, buildDecisionFeedbackPayload,
         loadFeedbackOutbox, queueFeedbackPayload, flushFeedbackOutbox, sendFeedbackPayload, canRunAiEvaluation,
         renderLocalResults, renderAiResults, isPrivateOrLocalHost, displayHost
     };

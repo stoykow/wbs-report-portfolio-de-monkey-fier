@@ -44,6 +44,8 @@ const {
     renderAiResults,
     generateSuggestedComment,
     createClientFingerprint,
+    extractParticipantName,
+    redactParticipantReferences,
     buildFeedbackPayload,
     buildDecisionFeedbackPayload,
     loadFeedbackOutbox,
@@ -185,13 +187,14 @@ test("baut anonymisierte Feedbackdaten ohne Teilnehmername oder Klartexttoken", 
         reportData: {
             reportNumber: "014", module: "IT-Service-Management", periodStart: "2026-04-06", periodEnd: "2026-04-12",
             participantName: "Darf nicht übertragen werden",
-            days: [{ weekday: "Montag", hours: 10, entries: ["ITIL-Inhalte bearbeitet"] }], totalHours: 50
+            days: [{ weekday: "Montag", hours: 10, entries: ["Sergey bearbeitete ITIL-Inhalte"] }], totalHours: 50
         },
         localIssues: [{ day: "Montag", type: "too_short", message: "Zu kurz" }],
-        aiResult: parseAiResponse('{"status":"warning","summary":"Hinweis","formalIssues":[],"contentIssues":[{"day":"Montag","message":"Genauer beschreiben"}],"hourIssues":[],"notes":[],"suggestedComment":"Bitte genauer beschreiben."}'),
+        aiResult: parseAiResponse('{"status":"warning","summary":"Hinweis für Smorodin","formalIssues":[],"contentIssues":[{"day":"Montag","message":"Sergey soll genauer beschreiben"}],"hourIssues":[],"notes":[],"suggestedComment":"Bitte genauer beschreiben, Sergey."}'),
         profile: { provider: "lm-studio", model: "synthetic-model", manualModel: "", token: "sk-darf-nicht-gesendet-werden" },
         clientFingerprint: "15e29794d4a341ce3b5442c5684c781132bbadada0083aeb121384e3ede9e415",
-        rating: "partly_correct", categories: ["too_strict"], comment: "Zu streng", expectedResult: "Kein Hinweis", requestDurationMs: 1234
+        participantName: "Smorodin, Sergey",
+        rating: "partly_correct", categories: ["too_strict"], comment: "Sergey: Zu streng", expectedResult: "Für Smorodin kein Hinweis", requestDurationMs: 1234
     });
     const json = JSON.stringify(payload);
     assert.equal(payload.scriptVersion, "2.5.0");
@@ -199,9 +202,21 @@ test("baut anonymisierte Feedbackdaten ohne Teilnehmername oder Klartexttoken", 
     assert.equal(payload.report.module, "IT-Service-Management");
     assert.equal(payload.technical.clientFingerprint.length, 64);
     assert.equal(json.includes("Darf nicht übertragen werden"), false);
+    assert.equal(json.includes("Smorodin"), false);
+    assert.equal(json.includes("Sergey"), false);
+    assert.equal(json.includes("[NAME ENTFERNT]"), true);
     assert.equal(json.includes("sk-darf-nicht-gesendet-werden"), false);
     assert.equal(payload.localEvaluation.issueCount, 1);
     assert.equal(payload.aiEvaluation.contentIssues.length, 1);
+});
+
+test("erkennt den Teilnehmernamen aus der Berichtsüberschrift", () => {
+    const root = {
+        title: "WBS Berichtsheft",
+        querySelectorAll: () => [{ textContent: "Bericht Smorodin, Sergey - 27. Jul 2026 - 02. Aug 2026" }]
+    };
+    assert.equal(extractParticipantName(root), "Smorodin, Sergey");
+    assert.equal(redactParticipantReferences("Notiz für Sergey Smorodin", "Smorodin, Sergey"), "Notiz für [NAME ENTFERNT] [NAME ENTFERNT]");
 });
 
 test("baut automatische Entscheidungsrückmeldungen mit endgültiger Notiz", () => {
